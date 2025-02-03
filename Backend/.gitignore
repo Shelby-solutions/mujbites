@@ -1,0 +1,27 @@
+# Ignore node_modules directory
+/node_modules
+
+# Ignore environment variables file
+.env
+
+# Ignore package-lock.json (not recommended, but added as per your request)
+package-lock.json
+
+# Ignore sensitive credentials files
+Backend/notifications/mujbites-aed86-firebase-adminsdk-uwbqk-9492fabc92.json
+Backend/notifications/*.json
+
+# Ignore logs
+*.log
+
+# Ignore IDE-specific files
+.DS_Store
+.idea
+.vscode
+
+# Ignore build and distribution directories
+dist
+build
+
+# Ignore test coverage reports
+coverage
