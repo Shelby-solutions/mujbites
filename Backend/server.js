@@ -10,37 +10,16 @@ const auth = require('./middleware/authMiddleware');
 const Cart = require('./models/Cart');
 const { app, wss, notifyRestaurant, handleUpgrade } = require('./app');
 const http = require('http');
-const WebSocket = require('ws');
 const portfinder = require('portfinder');
-
-// Load environment variables
-dotenv.config();
-
-// Set mongoose options
-mongoose.set('strictQuery', true);
 
 // Create HTTP server
 const server = http.createServer(app);
 
-// Initialize WebSocket server
-const wss = new WebSocket.Server({ server });
+// Remove these duplicate declarations
+// const wss = new WebSocket.Server({ server });
+// const clients = new Map();
 
-// Store connected clients
-const clients = new Map();
-
-// Add WebSocket upgrade handling
-// Single upgrade handler
-server.on('upgrade', (request, socket, head) => {
-  const pathname = new URL(request.url, `ws://${request.headers.host}`).pathname;
-  
-  if (pathname === '/ws') {
-    handleUpgrade(request, socket, head);
-  } else {
-    socket.destroy();
-  }
-});
-
-// WebSocket connection handling
+// Attach WebSocket server to HTTP server
 wss.on('connection', (ws, req) => {
   try {
     const url = new URL(req.url, `ws://${req.headers.host}`);
@@ -51,11 +30,12 @@ wss.on('connection', (ws, req) => {
     console.log('WebSocket connection attempt:', { userId, restaurantId, type });
 
     if (userId && restaurantId) {
-      clients.set(restaurantId, ws);
+      // Use the clients Map from app.js through the wss context
+      wss.clients.set(restaurantId, ws);
       console.log(`Restaurant ${restaurantId} connected to WebSocket`);
       
       ws.on('close', () => {
-        clients.delete(restaurantId);
+        wss.clients.delete(restaurantId);
         console.log(`Restaurant ${restaurantId} disconnected from WebSocket`);
       });
 
@@ -70,27 +50,7 @@ wss.on('connection', (ws, req) => {
   }
 });
 
-// Update notifyRestaurant function
-const notifyRestaurant = (restaurantId, orderData) => {
-  try {
-    console.log('Attempting to notify restaurant:', restaurantId);
-    const client = clients.get(restaurantId);
-    
-    if (client && client.readyState === WebSocket.OPEN) {
-      const notification = {
-        type: 'newOrder',
-        order: orderData
-      };
-      
-      client.send(JSON.stringify(notification));
-      console.log(`Notification sent to restaurant ${restaurantId}`);
-    } else {
-      console.log(`Restaurant ${restaurantId} not connected to WebSocket`);
-    }
-  } catch (error) {
-    console.error('Error sending notification:', error);
-  }
-};
+// Remove the entire notifyRestaurant function since it's imported from app.js
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
@@ -139,5 +99,5 @@ startServer().catch(err => {
   process.exit(1);
 });
 
-// Export notification function
-module.exports = { notifyRestaurant };
+// Export only what's needed
+module.exports = { server };
