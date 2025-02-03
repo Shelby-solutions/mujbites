@@ -47,25 +47,35 @@ const createOrder = async (req, res) => {
 
     // Send notifications
     try {
-      // Notify customer
-      await sendOrderNotification(
-        customer,
-        'ORDER_PLACED',
-        { restaurantName }
-      );
-
-      // Notify restaurant owner
+      // Get restaurant owner's ID
       const restaurantData = await Restaurant.findById(restaurant).populate("owner");
       if (restaurantData?.owner) {
+        // Send WebSocket notification
+        global.io.to(`restaurant_${restaurant}`).emit('newOrder', {
+          type: 'newOrder',
+          order: {
+            _id: order._id,
+            restaurantName,
+            items: validatedItems,
+            totalAmount,
+            orderStatus: "Placed",
+            createdAt: order.createdAt
+          }
+        });
+
+        // Send push notification
         await sendOrderNotification(
           restaurantData.owner._id,
           'NEW_ORDER',
-          { restaurantName }
+          {
+            orderId: order._id,
+            restaurantName,
+            amount: totalAmount
+          }
         );
       }
     } catch (notificationError) {
       console.error('Notification error:', notificationError);
-      // Don't fail the order if notifications fail
     }
 
     res.status(201).json({
