@@ -4,7 +4,10 @@ const mongoose = require('mongoose');
 const WebSocket = require('ws');
 require('dotenv').config();
 
-const app = express();  // Keep only this declaration
+const app = express();
+
+// Define PORT before using it
+const PORT = process.env.PORT || 5000;
 
 // Create WebSocket server
 const wss = new WebSocket.Server({ noServer: true });
@@ -137,10 +140,11 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('Connected to MongoDB'))
   .catch(err => console.error('MongoDB connection error:', err));
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+// Remove the server.listen call from here since it's now handled in server.js
+// Remove these lines:
+// const server = app.listen(PORT, () => {
+//   console.log(`Server is running on port ${PORT}`);
+// });
 
 // Keep only one export at the end of the file
 module.exports = { app, notifyRestaurant };
