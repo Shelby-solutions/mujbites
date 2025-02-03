@@ -10,10 +10,14 @@ const auth = require('./middleware/authMiddleware');
 const Cart = require('./models/Cart');
 const { app, wss } = require('./app');  // Remove notifyRestaurant from import
 const http = require('http');
+const WebSocket = require('ws');  // Add WebSocket import back
 const portfinder = require('portfinder');
 
 // Create HTTP server
 const server = http.createServer(app);
+
+// Create WebSocket server
+const wss = new WebSocket.Server({ server });
 
 // Store connected clients
 const clients = new Map();
@@ -49,6 +53,7 @@ wss.on('connection', (ws, req) => {
 });
 
 // Define notifyRestaurant function here
+// Update notifyRestaurant function to use WebSocket.OPEN constant
 function notifyRestaurant(restaurantId, orderData) {
   try {
     console.log('Attempting to notify restaurant:', restaurantId);
@@ -62,13 +67,19 @@ function notifyRestaurant(restaurantId, orderData) {
       
       client.send(JSON.stringify(notification));
       console.log(`Notification sent to restaurant ${restaurantId}`);
+      return true;
     } else {
       console.log(`Restaurant ${restaurantId} not connected to WebSocket`);
+      return false;
     }
   } catch (error) {
     console.error('Error sending notification:', error);
+    return false;
   }
 }
+
+// Make notifyRestaurant available globally
+global.notifyRestaurant = notifyRestaurant;
 
 // Export both server and notifyRestaurant
 module.exports = { server, notifyRestaurant };

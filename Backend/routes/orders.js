@@ -3,7 +3,6 @@ const router = express.Router();
 const Order = require("../models/orders");
 const Restaurant = require("../models/restaurantModel");
 const authenticateToken = require("../middleware/authMiddleware");
-const { notifyRestaurant } = require('../app');
 
 // POST /api/orders - Place a new order
 // Update the POST route
@@ -30,9 +29,12 @@ router.post("/", authenticateToken, async (req, res) => {
 
     await order.save();
 
-    // Notify restaurant about new order
-    const { notifyRestaurant } = require('../server');
-    notifyRestaurant(restaurant, order);
+    // Notify restaurant about new order using global function
+    if (global.notifyRestaurant) {
+      global.notifyRestaurant(restaurant, order);
+    } else {
+      console.warn('notifyRestaurant function not available');
+    }
 
     res.status(201).json({
       message: 'Order placed successfully',
