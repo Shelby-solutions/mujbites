@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';  // Add this import for TimeoutException
+import 'dart:math' as math;  // Add math library import
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -8,6 +9,8 @@ import 'package:my_app/services/user_preferences.dart';
 
 class ApiService {
   static const bool useProductionUrl = true; // Toggle this for development/production
+  static const int connectionTimeout = 30; // Connection timeout in seconds
+  static const int maxRetries = 3; // Maximum number of retry attempts
 
   static String get baseUrl {
     if (useProductionUrl) {
@@ -43,9 +46,9 @@ class ApiService {
     String method = 'GET',
     Map<String, dynamic>? body,
   }) async {
-    final maxRetries = 3;
     int retryCount = 0;
-    Duration timeout = const Duration(seconds: 30);
+    Duration timeout = Duration(seconds: connectionTimeout);
+    Duration retryDelay = const Duration(seconds: 2);
 
     while (retryCount < maxRetries) {
       try {
@@ -87,13 +90,22 @@ class ApiService {
           throw Exception('Request failed with status: ${response.statusCode}');
         }
       } on TimeoutException catch (_) {
-        retryCount++;
-        if (retryCount >= maxRetries) {
-          throw Exception('Request timed out. Please check your connection and try again.');
+        if (retryCount < maxRetries - 1) {
+          retryCount++;
+          print('Request timed out. Retrying (${retryCount}/${maxRetries})');
+          await Future.delayed(Duration(seconds: math.min(2 * (1 << retryCount), 10)));
+          continue;
         }
-        await Future.delayed(Duration(seconds: 2 * (1 << retryCount)));
-      } on SocketException catch (_) {
-        throw Exception('Network error. Please check your internet connection.');
+        throw Exception('Connection timed out. Please check your internet connection and try again.');
+      } on SocketException catch (e) {
+        print('Network error: $e');
+        if (retryCount < maxRetries - 1) {
+          retryCount++;
+          print('Network error. Retrying (${retryCount}/${maxRetries})');
+          await Future.delayed(Duration(seconds: math.min(2 * (1 << retryCount), 10)));
+          continue;
+        }
+        throw Exception('Unable to connect to the server. Please check your internet connection.');
       } on FormatException catch (_) {
         throw Exception('Received invalid response from server.');
       } catch (e) {
@@ -139,9 +151,9 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> login(String mobileNumber, String password) async {
-    final maxRetries = 3;
+    final maxRetries = 5;  // Increased retries
     int retryCount = 0;
-    Duration timeout = const Duration(seconds: 30); // Increased timeout
+    Duration timeout = const Duration(seconds: 45);  // Increased timeout
 
     while (retryCount < maxRetries) {
       try {
@@ -159,9 +171,7 @@ class ApiService {
           timeout,
           onTimeout: () {
             throw TimeoutException(
-              retryCount < maxRetries - 1
-                  ? 'Connection timed out. Retrying...'
-                  : 'Connection timed out. Please try again later.',
+              'Request timed out. Server might be busy. Retrying...',
             );
           },
         );
@@ -179,23 +189,25 @@ class ApiService {
           if (errorData['error']?.toString().contains('timed out') == true) {
             if (retryCount < maxRetries - 1) {
               retryCount++;
-              await Future.delayed(Duration(seconds: 2 * (1 << retryCount)));
+              await Future.delayed(Duration(seconds: math.min(2 * (1 << retryCount), 10)));
               continue;
             }
-            throw TimeoutException('Server is currently busy. Please try again in a few moments.');
+            throw TimeoutException('Server is experiencing high load. Please try again in a few moments.');
           }
-          throw Exception(errorData['message'] ?? 'An error occurred on the server. Please try again.');
+          throw Exception(errorData['message'] ?? 'Server error. Please try again.');
+        } else if (response.statusCode == 503) {
+          throw Exception('Service temporarily unavailable. Please try again later.');
         } else {
           throw Exception('Login failed. Please try again later.');
         }
-      } on TimeoutException catch (e) {
+      } on TimeoutException catch (_) {
         retryCount++;
         if (retryCount >= maxRetries) {
           throw Exception('Unable to connect to the server. Please check your internet connection and try again.');
         }
-        await Future.delayed(Duration(seconds: 2 * (1 << retryCount)));
+        await Future.delayed(Duration(seconds: math.min(2 * (1 << retryCount), 10)));
       } on SocketException catch (_) {
-        throw Exception('Network error. Please check your internet connection.');
+        throw Exception('Network error. Please check your internet connection and try again.');
       } on FormatException catch (_) {
         throw Exception('Received invalid response from server. Please try again.');
       } catch (e) {

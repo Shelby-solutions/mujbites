@@ -326,41 +326,42 @@ class NotificationService {
     _channel?.sink.close();
   }
 
-  Future<void> _showNotification(String title, String body, {Map<String, dynamic>? payload}) async {
+  Future<void> showNotification({
+    required String title,
+    required String body,
+    String? payload,
+    int? id,
+  }) async {
+    if (!_isInitialized) await initialize();
+
     final androidDetails = AndroidNotificationDetails(
-      'restaurant_orders',
-      'Restaurant Orders',
-      channelDescription: 'Notifications for new restaurant orders',
-      importance: Importance.max,
+      'mujbites_channel',
+      'MujBites Notifications',
+      channelDescription: 'Notifications from MujBites',
+      importance: Importance.high,
       priority: Priority.high,
+      enableLights: true,
       enableVibration: true,
       playSound: true,
-      sound: RawResourceAndroidNotificationSound('notification_sound'),
-      category: AndroidNotificationCategory.alarm,
-      fullScreenIntent: true,
-      visibility: NotificationVisibility.public,
     );
 
     final iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
-      sound: 'notification_sound.aiff',
-      categoryIdentifier: 'order_category',
-      interruptionLevel: InterruptionLevel.timeSensitive,
     );
 
-    final details = NotificationDetails(
+    final notificationDetails = NotificationDetails(
       android: androidDetails,
       iOS: iosDetails,
     );
 
     await _notifications.show(
-      DateTime.now().millisecond,
+      id ?? math.Random().nextInt(2147483647),
       title,
       body,
-      details,
-      payload: payload != null ? jsonEncode(payload) : null,
+      notificationDetails,
+      payload: payload,
     );
   }
 

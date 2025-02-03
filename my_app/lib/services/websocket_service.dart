@@ -32,12 +32,12 @@ class WebSocketService {
       }
 
       final wsUrl = Uri.parse(
-        'wss://mujbites-app.onrender.com/api/ws'  // Changed back to wss:// and added /api prefix
+        'ws://localhost:5000/ws'  // Updated to match backend WebSocket endpoint
       ).replace(
         queryParameters: {
           'userId': userId,
           'restaurantId': restaurantId,
-          'token': prefs.getString('token')?.replaceAll('Bearer ', ''), // Add token for authentication
+          'token': prefs.getString('token')?.replaceAll('Bearer ', ''),
         },
       );
 
@@ -45,6 +45,36 @@ class WebSocketService {
       
       await _channel?.sink.close();
       _channel = WebSocketChannel.connect(wsUrl);
+
+      _channel?.stream.listen(
+        (message) {
+          try {
+            final data = jsonDecode(message);
+            if (data['type'] == 'connectionConfirmed') {
+              _isConnected = true;
+              print('WebSocket connection confirmed');
+            } else if (data['type'] == 'newOrder') {
+              _notificationService.showNotification(
+                title: 'New Order',
+                body: 'You have received a new order!',
+                payload: data['order'].toString(),
+              );
+            }
+          } catch (e) {
+            print('Error processing WebSocket message: $e');
+          }
+        },
+        onError: (error) {
+          print('WebSocket error: $error');
+          _isConnected = false;
+          _reconnect();
+        },
+        onDone: () {
+          print('WebSocket connection closed');
+          _isConnected = false;
+          _reconnect();
+        },
+      );
       
       bool connected = false;
       Timer(const Duration(seconds: 30), () {
@@ -64,10 +94,10 @@ class WebSocketService {
           final data = jsonDecode(message);
           if (data['type'] == 'newOrder') {
             final orderData = data['order'] as Map<String, dynamic>;
-            await _notificationService.showOrderNotification(
-              'New Order!',
-              'You have received a new order. Tap to view details.',
-              data: orderData,
+            await _notificationService.showNotification(
+              title: 'New Order!',
+              body: 'You have received a new order. Tap to view details.',
+              payload: jsonEncode(orderData)
             );
           }
         },

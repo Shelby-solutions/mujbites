@@ -13,10 +13,13 @@ app.use(cors({
     'http://10.0.2.2:5000',
     'http://localhost:5000',
     'http://127.0.0.1:5000',
+    'ws://localhost:5000',
+    'https://mujbites-app.onrender.com',
+    'wss://mujbites-app.onrender.com',
   ],
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With']
 }));
 
 // Middleware
