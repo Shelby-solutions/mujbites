@@ -15,10 +15,9 @@ const wss = new WebSocket.Server({ noServer: true });
 // Store connected clients
 const clients = new Map();
 
-// Update WebSocket connection handling
+// WebSocket connection handling
 wss.on('connection', (ws, request) => {
   try {
-    // Parse URL properly
     const url = new URL(request.url, `ws://${request.headers.host}`);
     const userId = url.searchParams.get('userId');
     const restaurantId = url.searchParams.get('restaurantId');
@@ -35,7 +34,6 @@ wss.on('connection', (ws, request) => {
         console.log(`Restaurant ${restaurantId} disconnected from WebSocket`);
       });
 
-      // Send connection confirmation
       ws.send(JSON.stringify({
         type: 'connectionConfirmed',
         message: 'Successfully connected to WebSocket server'
@@ -50,42 +48,7 @@ wss.on('connection', (ws, request) => {
   }
 });
 
-// Update the server upgrade handling
-server.on('upgrade', (request, socket, head) => {
-  try {
-    const pathname = new URL(request.url, `ws://${request.headers.host}`).pathname;
-    
-    if (pathname === '/ws') {
-      wss.handleUpgrade(request, socket, head, (ws) => {
-        wss.emit('connection', ws, request);
-      });
-    } else {
-      socket.destroy();
-    }
-  } catch (error) {
-    console.error('Error in upgrade handling:', error);
-    socket.destroy();
-  }
-});
-
-// Add this to handle WebSocket upgrade
-const server = app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
-
-server.on('upgrade', (request, socket, head) => {
-  const pathname = new URL(request.url, 'ws://localhost').pathname;
-  
-  if (pathname === '/ws') {
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit('connection', ws, request);
-    });
-  } else {
-    socket.destroy();
-  }
-});
-
-// Add this function to notify restaurants of new orders
+// Function to notify restaurants of new orders
 function notifyRestaurant(restaurantId, orderData) {
   const client = clients.get(restaurantId);
   if (client && client.readyState === WebSocket.OPEN) {
@@ -102,11 +65,11 @@ function notifyRestaurant(restaurantId, orderData) {
 // CORS configuration
 app.use(cors({
   origin: [
-    'http://localhost:3000',          // React web
-    'http://localhost',               // Flutter web
-    'http://10.0.2.2:5000',          // Android emulator
-    'http://localhost:5000',          // iOS simulator
-    'http://127.0.0.1:5000',         // Local testing
+    'http://localhost:3000',
+    'http://localhost',
+    'http://10.0.2.2:5000',
+    'http://localhost:5000',
+    'http://127.0.0.1:5000',
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -116,11 +79,6 @@ app.use(cors({
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// MongoDB connection
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('Connected to MongoDB'))
-  .catch(err => console.error('MongoDB connection error:', err));
 
 // Routes
 const userRoutes = require('./routes/userRoutes');
@@ -146,19 +104,5 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Remove this export
-// module.exports = app;
-
-// MongoDB connection
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('Connected to MongoDB'))
-  .catch(err => console.error('MongoDB connection error:', err));
-
-// Remove the server.listen call from here since it's now handled in server.js
-// Remove these lines:
-// const server = app.listen(PORT, () => {
-//   console.log(`Server is running on port ${PORT}`);
-// });
-
-// Keep only one export at the end of the file
-module.exports = { app, notifyRestaurant };
+// Export app and WebSocket server
+module.exports = { app, wss, notifyRestaurant };

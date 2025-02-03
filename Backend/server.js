@@ -22,11 +22,29 @@ mongoose.set('strictQuery', true);
 // Create HTTP server
 const server = http.createServer(app);
 
-// Initialize WebSocket server after HTTP server creation
+// Initialize WebSocket server
 const wss = new WebSocket.Server({ server });
 
 // Store connected clients
 const clients = new Map();
+
+// Add WebSocket upgrade handling
+server.on('upgrade', (request, socket, head) => {
+  try {
+    const pathname = new URL(request.url, `ws://${request.headers.host}`).pathname;
+    
+    if (pathname === '/ws') {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+    } else {
+      socket.destroy();
+    }
+  } catch (error) {
+    console.error('Error in upgrade handling:', error);
+    socket.destroy();
+  }
+});
 
 // WebSocket connection handling
 wss.on('connection', (ws, req) => {
