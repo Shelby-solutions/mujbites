@@ -13,16 +13,58 @@ const wss = new WebSocket.Server({ noServer: true });
 const clients = new Map();
 
 wss.on('connection', (ws, request) => {
-  const { userId, restaurantId } = request.query;
+  const { userId, restaurantId, type } = request.query;
   
   if (userId && restaurantId) {
-    clients.set(restaurantId, ws);
+    clients.set(restaurantId, {
+      ws,
+      userId,
+      type,
+      connected: true
+    });
     console.log(`Restaurant ${restaurantId} connected to WebSocket`);
     
+    ws.on('message', (message) => {
+      try {
+        const data = JSON.parse(message);
+        console.log('Received message:', data);
+        // Handle different message types
+      } catch (e) {
+        console.error('Error parsing message:', e);
+      }
+    });
+    
     ws.on('close', () => {
+      const client = clients.get(restaurantId);
+      if (client) {
+        client.connected = false;
+      }
       clients.delete(restaurantId);
       console.log(`Restaurant ${restaurantId} disconnected from WebSocket`);
     });
+
+    // Send connection confirmation
+    ws.send(JSON.stringify({
+      type: 'connected',
+      restaurantId
+    }));
+  }
+});
+
+// Add this to handle WebSocket upgrade
+const server = app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
+
+server.on('upgrade', (request, socket, head) => {
+  const pathname = new URL(request.url, 'ws://localhost').pathname;
+  
+  if (pathname === '/ws') {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request);
+    });
+  } else {
+    socket.destroy();
   }
 });
 

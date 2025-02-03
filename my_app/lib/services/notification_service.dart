@@ -12,11 +12,21 @@ import '../theme/app_theme.dart';
 import '../services/user_preferences.dart';
 import 'dart:math' as math;  // Add this import
 
+// Add this at the very top of the file, before the class definition
+@pragma('vm:entry-point')
+void notificationTapBackground(NotificationResponse notificationResponse) {
+  print('Handling background notification tap: ${notificationResponse.payload}');
+  // Add any background handling logic here
+}
+
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
   factory NotificationService() => _instance;
   NotificationService._internal();
 
+  // Add this field
+  bool _isConnected = false;
+  
   WebSocketChannel? _channel;
   final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
   Function(Map<String, dynamic>)? onNewOrder;
@@ -97,22 +107,29 @@ class NotificationService {
   void _setupBackgroundHandler() {
     _channel?.stream.listen(
       (message) async {
-        final data = jsonDecode(message);
-        if (data['type'] == 'newOrder') {
-          await showOrderNotification(
-            'New Order!',
-            'Order #${data['order']['_id'].toString().substring(0, 6)}',
-            payload: {'orderData': data['order']},
-          );
+        try {
+          final data = jsonDecode(message);
+          print('Received WebSocket message: $data');
+          
+          if (data['type'] == 'newOrder') {
+            await _processNewOrder(data['order']);
+          } else if (data['type'] == 'orderStatus') {
+            // Handle order status updates if needed
+            print('Received order status update: ${data['status']}');
+          }
+        } catch (e) {
+          print('Error processing WebSocket message: $e');
         }
       },
       onError: (error) {
         print('WebSocket error: $error');
-        connectToWebSocket();  // Changed to use existing method
+        _isConnected = false;
+        _handleConnectionError();
       },
       onDone: () {
         print('WebSocket connection closed');
-        connectToWebSocket();  // Changed to use existing method
+        _isConnected = false;
+        _handleConnectionError();
       },
     );
   }
@@ -122,50 +139,39 @@ class NotificationService {
     await showOrderNotification(
       'New Order Received!',
       'Order #${orderData['_id'].toString().substring(orderData['_id'].toString().length - 6)}',
-      payload: {'orderData': orderData},
+      data: {'orderData': orderData}, // Changed 'payload' to 'data'
     );
     onNewOrder?.call(orderData);
   }
 
-  Future<void> showOrderNotification(
-    String title,
-    String body, {
-    Map<String, dynamic>? payload,
-  }) async {
-    final androidDetails = AndroidNotificationDetails(
+  Future<void> showOrderNotification(String title, String message, {Map<String, dynamic>? data}) async {
+    const androidDetails = AndroidNotificationDetails(
       'restaurant_orders',
       'Restaurant Orders',
       channelDescription: 'Notifications for new restaurant orders',
-      importance: Importance.max,
+      importance: Importance.high,
       priority: Priority.high,
       enableVibration: true,
-      playSound: true,
     );
-
-    final iOSDetails = DarwinNotificationDetails(
+    
+    const iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
-      sound: 'default',
-      interruptionLevel: InterruptionLevel.active,
     );
-
-    final details = NotificationDetails(
+    
+    const details = NotificationDetails(
       android: androidDetails,
-      iOS: iOSDetails,
+      iOS: iosDetails,
     );
-
-    try {
-      await _notifications.show(  // Changed from flutterLocalNotificationsPlugin to _notifications
-        DateTime.now().millisecond,
-        title,
-        body,
-        details,
-        payload: jsonEncode(payload),
-      );
-    } catch (e) {
-      print('Error showing notification: $e');
-    }
+    
+    await _notifications.show(
+      DateTime.now().millisecondsSinceEpoch.toInt(),
+      title,
+      message,
+      details,
+      payload: data != null ? jsonEncode(data) : null,
+    );
   }
 
   // Add connection state management
@@ -175,9 +181,10 @@ class NotificationService {
   int _reconnectAttempts = 0;
   static const int maxReconnectAttempts = 5;
 
+  // Update the _wsUrl getter
   String get _wsUrl {
     const baseUrl = 'mujbites-app.onrender.com';
-    return 'wss://$baseUrl/api/ws';  // Updated path to match server
+    return 'wss://$baseUrl/ws';  // Remove /api prefix as it's not in the backend route
   }
 
   Future<void> connectToWebSocket() async {
@@ -193,68 +200,62 @@ class NotificationService {
       final userId = prefs.getString('userId');
       final restaurantId = prefs.getString('restaurantId');
       
-      print('WebSocket Connection Attempt:');
-      print('Token: $token');
-      print('UserId: $userId');
-      print('RestaurantId: $restaurantId');
-      
       if (token == null || userId == null || restaurantId == null) {
         print('Missing credentials for WebSocket connection');
         return;
       }
 
-      final wsUrl = Uri.parse(_wsUrl).replace(
+      // Create WebSocket URL with query parameters
+      final uri = Uri.parse(_wsUrl).replace(
         queryParameters: {
           'token': token,
           'userId': userId,
           'restaurantId': restaurantId,
+          'type': 'restaurant',
         },
       );
       
-      print('Attempting WebSocket connection to: $wsUrl');
+      print('Attempting WebSocket connection to: $uri');
       
       await _channel?.sink.close();
-      _channel = WebSocketChannel.connect(wsUrl);
+      _channel = WebSocketChannel.connect(uri);
       
       // Add connection timeout
       bool connected = false;
-      Timer(const Duration(seconds: 10), () {
+      Timer? timeoutTimer;
+      
+      timeoutTimer = Timer(const Duration(seconds: 10), () {
         if (!connected) {
           print('WebSocket connection timeout');
           _handleConnectionError();
         }
       });
 
-      _channel?.stream.listen(
-        (message) {
-          print('WebSocket message received: $message');
-          try {
-            final data = jsonDecode(message);
-            if (data['type'] == 'newOrder') {
-              print('Processing new order notification');
-              _processNewOrder(data['order']);
-            }
-          } catch (e) {
-            print('Error processing WebSocket message: $e');
-          }
-        },
-        onError: (error) {
-          print('WebSocket error: $error');
-          _handleConnectionError();
-        },
-        onDone: () {
-          print('WebSocket connection closed');
-          _handleConnectionError();
-        },
-        cancelOnError: false,
-      );
+      try {
+        await _channel!.ready;
+        connected = true;
+        timeoutTimer.cancel();
+        
+        _isConnected = true;
+        _reconnectAttempts = 0;
+        print('WebSocket connection established successfully');
 
-      connected = true;
-      _reconnectAttempts = 0;
-      print('WebSocket connection established');
+        _setupBackgroundHandler();
+        
+        // Send initial connection message
+        _channel?.sink.add(jsonEncode({
+          'type': 'connect',
+          'role': 'restaurant',
+          'restaurantId': restaurantId,
+        }));
+      } catch (e) {
+        print('Error during WebSocket connection setup: $e');
+        throw e;
+      }
       
     } catch (e) {
       print('WebSocket connection error: $e');
+      _isConnected = false;
       _handleConnectionError();
     } finally {
       _isConnecting = false;

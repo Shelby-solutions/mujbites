@@ -208,17 +208,27 @@ class ApiService {
   }
 
   // Order Methods
+  // Update the createOrder method
   Future<Map<String, dynamic>> createOrder(Map<String, dynamic> orderData) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/orders'),
-      headers: await getHeaders(),
-      body: jsonEncode(orderData),
-    );
-
-    if (response.statusCode == 201) {
-      return jsonDecode(response.body);
-    } else {
-      throw Exception('Failed to create order');
+    try {
+      print('Creating order with data: $orderData');
+      final response = await http.post(
+        getUri('/orders'), // Changed from /api/orders to /orders
+        headers: await getHeaders(),
+        body: jsonEncode(orderData),
+      );
+  
+      print('Order creation response: ${response.statusCode}');
+      print('Response body: ${response.body}');
+  
+      if (response.statusCode == 201) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Failed to create order: ${response.statusCode}\n${response.body}');
+      }
+    } catch (e) {
+      print('Error creating order: $e');
+      rethrow;
     }
   }
 

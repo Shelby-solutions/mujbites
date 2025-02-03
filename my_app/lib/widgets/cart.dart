@@ -72,7 +72,6 @@ class _CartWidgetState extends State<CartWidget> {
   }
 
   Future<void> _confirmOrder(BuildContext context, CartProvider cartProvider) async {
-    // Add minimum order check
     if (cartProvider.totalAmount < 100) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -95,33 +94,44 @@ class _CartWidgetState extends State<CartWidget> {
 
     try {
       setState(() => _isOrdering = true);
+      
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
       
       if (token == null) {
-        throw Exception('Not authenticated');
+        throw Exception('Authentication token not found');
       }
 
-      // Update address in backend
-      await _orderService.updateAddress(_addressController.text, token);
-
       final firstItem = cartProvider.items.first;
-      await _orderService.placeOrder(
+      final orderData = {
+        'restaurant': firstItem.restaurantId,
+        'restaurantName': firstItem.restaurantName,
+        'items': cartProvider.items.map((item) => {
+          'menuItem': item.id,
+          'itemName': item.name,
+          'quantity': item.quantity,
+          'size': item.size,
+        }).toList(),
+        'totalAmount': cartProvider.totalAmount,
+        'address': _addressController.text,
+      };
+
+      print('Sending order request with data:');
+      print('Order Items: ${orderData['items']}');
+
+      final response = await _orderService.placeOrder(
         items: cartProvider.items,
         restaurantId: firstItem.restaurantId,
-        restaurantName: 'Restaurant Name',
+        restaurantName: firstItem.restaurantName,
         totalAmount: cartProvider.totalAmount,
         address: _addressController.text,
-        token: token,
+        token: token, // Add the token parameter
       );
 
       cartProvider.clearCart();
-      
-      // Close the address dialog first
-      Navigator.pop(context);
-      // Then close the cart widget
-      widget.onClose();
-      
+      Navigator.pop(context); // Close address dialog
+      widget.onClose(); // Close cart widget
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Order placed successfully!'),
@@ -131,7 +141,7 @@ class _CartWidgetState extends State<CartWidget> {
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(e.toString()),
+          content: Text('Error placing order: ${e.toString()}'),
           backgroundColor: Colors.red,
         ),
       );
@@ -436,4 +446,4 @@ class _CartWidgetState extends State<CartWidget> {
       ),
     );
   }
-} 
+}

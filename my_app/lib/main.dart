@@ -17,6 +17,7 @@ import 'widgets/custom_navbar.dart';
 import 'services/user_preferences.dart';
 import 'services/notification_service.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'services/websocket_service.dart';
 
 // Add this global variable at the top level
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
@@ -27,6 +28,10 @@ void main() async {
   // Initialize notification service
   final notificationService = NotificationService();
   await notificationService.initialize();
+  
+  // Initialize WebSocket service for restaurants
+  final webSocketService = WebSocketService();
+  await webSocketService.connect();
   
   // Ensure notification permissions are requested
   if (!kIsWeb && Platform.isIOS) {

@@ -447,6 +447,7 @@ class _RestaurantScreenState extends State<RestaurantScreen> {
       final itemId = item['_id']?.toString() ?? item['id']?.toString();
       final itemName = item['name']?.toString() ?? 'Unknown Item';
       final itemPrice = (item['price'] ?? 0).toDouble();
+      final restaurantName = _restaurant?['name']?.toString() ?? 'Unknown Restaurant';
 
       if (itemId == null) {
         throw Exception('Invalid item data');
@@ -463,6 +464,7 @@ class _RestaurantScreenState extends State<RestaurantScreen> {
           price: (selectedSize['price'] as num).toDouble(),
           size: selectedSize['name']?.toString() ?? 'Regular',
           restaurantId: widget.restaurantId,
+          restaurantName: restaurantName, // Added restaurant name
         ),
       );
       

@@ -23,28 +23,42 @@ mongoose.set('strictQuery', true);
 const server = http.createServer(app);
 
 // Initialize WebSocket server
+// Remove this first declaration
 const wss = new WebSocket.Server({ server });
 
 // Store connected clients
 const clients = new Map();
 
-// Add notifyRestaurant function
+// Remove the first notifyRestaurant function (lines 27-38) and keep only this updated version
 const notifyRestaurant = (restaurantId, orderData) => {
-  const client = clients.get(restaurantId);
-  if (client && client.readyState === WebSocket.OPEN) {
-    client.send(JSON.stringify({
-      type: 'newOrder',
-      order: orderData
-    }));
-    console.log(`Notification sent to restaurant ${restaurantId}`);
-  } else {
-    console.log(`Restaurant ${restaurantId} not connected to WebSocket`);
+  try {
+    console.log('Attempting to notify restaurant:', restaurantId);
+    const client = clients.get(restaurantId);
+    
+    if (client && client.readyState === WebSocket.OPEN) {
+      const notification = {
+        type: 'newOrder',
+        order: orderData
+      };
+      
+      client.send(JSON.stringify(notification));
+      console.log(`Notification sent to restaurant ${restaurantId}`);
+    } else {
+      console.log(`Restaurant ${restaurantId} not connected to WebSocket`);
+    }
+  } catch (error) {
+    console.error('Error sending notification:', error);
   }
 };
 
 // WebSocket connection handling
 wss.on('connection', (ws, req) => {
-  const { userId, restaurantId } = req.query;
+  const url = new URL(req.url, 'ws://localhost');
+  const userId = url.searchParams.get('userId');
+  const restaurantId = url.searchParams.get('restaurantId');
+
+  console.log('WebSocket connection attempt:', { userId, restaurantId });
+
   if (userId && restaurantId) {
     clients.set(restaurantId, ws);
     console.log(`Restaurant ${restaurantId} connected to WebSocket`);
@@ -53,6 +67,12 @@ wss.on('connection', (ws, req) => {
       clients.delete(restaurantId);
       console.log(`Restaurant ${restaurantId} disconnected from WebSocket`);
     });
+
+    // Send a test message to confirm connection
+    ws.send(JSON.stringify({
+      type: 'connectionConfirmed',
+      message: 'Successfully connected to WebSocket server'
+    }));
   }
 });
 
