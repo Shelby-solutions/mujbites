@@ -1,17 +1,11 @@
 const express = require('express');
+// Remove duplicate express and app declarations
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
-const cors = require('cors');
-const helmet = require('helmet');
-const morgan = require('morgan');
-const session = require('express-session');
-const MongoStore = require('connect-mongo');
-const auth = require('./middleware/authMiddleware');
-const Cart = require('./models/Cart');
-const { app, wss } = require('./app');  // Remove notifyRestaurant from import
 const http = require('http');
-const WebSocket = require('ws');  // Add WebSocket import back
+const WebSocket = require('ws');
 const portfinder = require('portfinder');
+const { app } = require('./app');  // Only import app
 
 // Create HTTP server
 const server = http.createServer(app);
@@ -52,9 +46,8 @@ wss.on('connection', (ws, req) => {
   }
 });
 
-// Define notifyRestaurant function here
-// Update notifyRestaurant function to use WebSocket.OPEN constant
-function notifyRestaurant(restaurantId, orderData) {
+// Define global notifyRestaurant function
+global.notifyRestaurant = function(restaurantId, orderData) {
   try {
     console.log('Attempting to notify restaurant:', restaurantId);
     const client = clients.get(restaurantId);
@@ -76,10 +69,5 @@ function notifyRestaurant(restaurantId, orderData) {
     console.error('Error sending notification:', error);
     return false;
   }
-}
-
-// Make notifyRestaurant available globally
-global.notifyRestaurant = notifyRestaurant;
-
-// Export both server and notifyRestaurant
-module.exports = { server, notifyRestaurant };
+};
+module.exports = { server };

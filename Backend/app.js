@@ -178,4 +178,9 @@ app.use((err, req, res, next) => {
 
 // Export app and WebSocket server
 // Export the handleUpgrade function along with other exports
-module.exports = { app, wss, notifyRestaurant, handleUpgrade };
+// Remove these lines from app.js
+// const WebSocket = require('ws');
+// const wss = new WebSocket.Server({ noServer: true });
+// const clients = new Map();
+
+module.exports = { app };  // Only export app
