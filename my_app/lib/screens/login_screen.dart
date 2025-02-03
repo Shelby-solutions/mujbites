@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../theme/app_theme.dart';
@@ -57,8 +59,16 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         throw Exception('Invalid response from server');
       }
+    } on TimeoutException {
+      setState(() => _error = 'Connection timed out. Please check your internet connection and try again.');
     } catch (e) {
-      setState(() => _error = e.toString());
+      String errorMessage = e.toString();
+      if (errorMessage.contains('timed out')) {
+        errorMessage = 'Server is busy. Please try again in a few moments.';
+      } else if (errorMessage.contains('Login failed')) {
+        errorMessage = 'Login failed. Please check your credentials and try again.';
+      }
+      setState(() => _error = errorMessage);
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -310,4 +320,4 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }
-} 
+}

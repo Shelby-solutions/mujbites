@@ -109,32 +109,65 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> login(String mobileNumber, String password) async {
-    try {
-      print('\n=== API Login Request ===');
-      print('Mobile: $mobileNumber');
-      
-      final response = await http.post(
-        getUri('/users/login'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
+    final maxRetries = 3;
+    int retryCount = 0;
+    Duration timeout = const Duration(seconds: 15);
+
+    while (retryCount < maxRetries) {
+      try {
+        final headers = await getHeaders();
+        final body = {
           'mobileNumber': mobileNumber,
           'password': password,
-        }),
-      );
+        };
 
-      print('Response status: ${response.statusCode}');
-      final responseData = jsonDecode(response.body);
-      print('Response data: $responseData');
+        final response = await http.post(
+          getUri('/users/login'),
+          headers: headers,
+          body: jsonEncode(body),
+        ).timeout(
+          timeout,
+          onTimeout: () {
+            throw TimeoutException(
+              retryCount < maxRetries - 1
+                  ? 'Connection timed out. Retrying...'
+                  : 'Connection timed out. Please check your internet connection.',
+            );
+          },
+        );
 
-      if (response.statusCode == 200) {
-        return responseData;
-      } else {
-        throw Exception('Login failed');
+        if (response.statusCode == 200) {
+          final responseData = jsonDecode(response.body);
+          if (responseData['success'] == false) {
+            throw Exception(responseData['message'] ?? 'Login failed');
+          }
+          return responseData;
+        } else if (response.statusCode == 401) {
+          throw Exception('Invalid mobile number or password');
+        } else if (response.statusCode == 500) {
+          final errorData = jsonDecode(response.body);
+          if (errorData['error']?.toString().contains('timed out') == true) {
+            throw TimeoutException('Server is busy. Please try again in a moment.');
+          }
+          throw Exception(errorData['message'] ?? 'Server error occurred');
+        } else {
+          throw Exception('Login failed. Please try again.');
+        }
+      } on TimeoutException catch (e) {
+        retryCount++;
+        if (retryCount >= maxRetries) {
+          throw Exception('Unable to connect to server. Please check your internet connection and try again.');
+        }
+        // Exponential backoff
+        await Future.delayed(Duration(seconds: 2 * (1 << retryCount)));
+      } on FormatException catch (_) {
+        throw Exception('Server returned invalid data. Please try again.');
+      } catch (e) {
+        if (e is Exception) rethrow;
+        throw Exception('An unexpected error occurred. Please try again.');
       }
-    } catch (e) {
-      print('Login error: $e');
-      rethrow;
     }
+    throw Exception('Login failed after multiple attempts. Please try again later.');
   }
 
   // Restaurant Methods

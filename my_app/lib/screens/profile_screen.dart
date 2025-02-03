@@ -386,19 +386,134 @@ class SettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Settings'),
+        title: const Text('Settings',
+            style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black87)),
         backgroundColor: const Color(0xFFFAC744),
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.black87),
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFF9F9F9), Color(0xFFE0E0E0)],
+          ),
+        ),
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // Account Settings Section
+            _buildSectionHeader('Account Settings', Icons.person_outline),
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: Column(
+                children: [
+                  _buildSettingTile(
+                    'Edit Profile',
+                    Icons.edit,
+                    () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // Notifications Section
+            _buildSectionHeader('Notifications', Icons.notifications_none),
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: Column(
+                children: [
+                  _buildSwitchTile(
+                    'Push Notifications',
+                    Icons.notifications_active_outlined,
+                    true,
+                    (value) {},
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // About Section
+            _buildSectionHeader('About', Icons.info_outline),
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: Column(
+                children: [
+                  _buildSettingTile(
+                    'App Version',
+                    Icons.info_outline,
+                    () {},
+                    trailing: const Text('1.0.0',
+                        style: TextStyle(color: Colors.grey)),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // Logout Button
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: _buildSettingTile(
+                'Logout',
+                Icons.logout,
+                () => _logout(context),
+                textColor: Colors.red,
+                iconColor: Colors.red,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+      child: Row(
         children: [
-          ListTile(
-            leading: const Icon(Icons.logout, color: Colors.red),
-            title: const Text('Logout', style: TextStyle(color: Colors.red)),
-            onTap: () => _logout(context),
+          Icon(icon, size: 20, color: const Color(0xFFFAC744)),
+          const SizedBox(width: 8),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87,
+            ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildSettingTile(String title, IconData icon, VoidCallback onTap,
+      {Widget? trailing, Color? textColor, Color? iconColor}) {
+    return ListTile(
+      leading: Icon(icon, color: iconColor ?? Colors.black54),
+      title: Text(title,
+          style: TextStyle(color: textColor ?? Colors.black87)),
+      trailing: trailing ?? const Icon(Icons.chevron_right, color: Colors.black54),
+      onTap: onTap,
+    );
+  }
+
+  Widget _buildSwitchTile(String title, IconData icon, bool value,
+      Function(bool) onChanged) {
+    return SwitchListTile(
+      secondary: Icon(icon, color: Colors.black54),
+      title: Text(title, style: const TextStyle(color: Colors.black87)),
+      value: value,
+      onChanged: onChanged,
+      activeColor: const Color(0xFFFAC744),
     );
   }
 }
