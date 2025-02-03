@@ -40,7 +40,6 @@ class ApiService {  static const bool useProductionUrl = true;
     return {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
-      'Origin': useProductionUrl ? 'https://mujbites-app.onrender.com' : 'http://localhost:5000',
       if (token != null) 'Authorization': 'Bearer $token',
     };
   }

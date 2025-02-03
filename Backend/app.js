@@ -16,11 +16,17 @@ app.use(cors({
       'http://127.0.0.1:5000',
       'ws://localhost:5000',
       'https://mujbites-app.onrender.com',
-      'wss://mujbites-app.onrender.com'
+      'wss://mujbites-app.onrender.com',
+      'https://mujbites-app.netlify.app',
+      'http://localhost:3001',
+      'http://localhost:5173',
+      'capacitor://localhost',
+      'ionic://localhost'
     ];
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
+      console.log('Blocked origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
