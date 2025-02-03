@@ -221,18 +221,33 @@ const deleteUser = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
-
 // Login
 const login = async (req, res) => {
   try {
     const { mobileNumber, password } = req.body;
+
+    // Validate input
+    if (!mobileNumber || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Mobile number and password are required'
+      });
+    }
+
+    // Validate mobile number format
+    if (!/^\d{10}$/.test(mobileNumber)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid mobile number format. Please enter a 10-digit number'
+      });
+    }
     
     console.log('Login attempt for:', mobileNumber);
     
     const user = await User.findOne({ mobileNumber })
       .select('+password')
       .populate('restaurant')
-      .maxTimeMS(30000)  // Increased timeout to 30 seconds
+      .maxTimeMS(30000)
       .lean();
     
     console.log('Database query completed for:', mobileNumber);
@@ -242,7 +257,7 @@ const login = async (req, res) => {
       restaurantId: user?.restaurant
     });
 
-    if (!user) {
+    if (!user || !user.isActive) {
       return res.status(401).json({
         success: false,
         message: 'Invalid mobile number or password'
@@ -261,7 +276,7 @@ const login = async (req, res) => {
     let restaurantData = null;
     if (user.role === 'restaurant') {
       restaurantData = await Restaurant.findOne({ owner: user._id })
-        .maxTimeMS(30000)  // Increased timeout to 30 seconds
+        .maxTimeMS(30000)
         .lean();
       
       console.log('Found restaurant:', restaurantData?._id);
@@ -297,7 +312,6 @@ const login = async (req, res) => {
 
     console.log('Login successful for user:', user._id);
     res.status(200).json(response);
-
   } catch (error) {
     console.error('Login error:', error.message);
     res.status(500).json({
