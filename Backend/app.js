@@ -21,7 +21,8 @@ app.use(cors({
       'http://localhost:3001',
       'http://localhost:5173',
       'capacitor://localhost',
-      'ionic://localhost'
+      'ionic://localhost',
+      'http://localhost:49421'
     ];
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
