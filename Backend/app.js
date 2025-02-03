@@ -15,42 +15,56 @@ const wss = new WebSocket.Server({ noServer: true });
 // Store connected clients
 const clients = new Map();
 
+// Update WebSocket connection handling
 wss.on('connection', (ws, request) => {
-  const { userId, restaurantId, type } = request.query;
-  
-  if (userId && restaurantId) {
-    clients.set(restaurantId, {
-      ws,
-      userId,
-      type,
-      connected: true
-    });
-    console.log(`Restaurant ${restaurantId} connected to WebSocket`);
-    
-    ws.on('message', (message) => {
-      try {
-        const data = JSON.parse(message);
-        console.log('Received message:', data);
-        // Handle different message types
-      } catch (e) {
-        console.error('Error parsing message:', e);
-      }
-    });
-    
-    ws.on('close', () => {
-      const client = clients.get(restaurantId);
-      if (client) {
-        client.connected = false;
-      }
-      clients.delete(restaurantId);
-      console.log(`Restaurant ${restaurantId} disconnected from WebSocket`);
-    });
+  try {
+    // Parse URL properly
+    const url = new URL(request.url, `ws://${request.headers.host}`);
+    const userId = url.searchParams.get('userId');
+    const restaurantId = url.searchParams.get('restaurantId');
+    const type = url.searchParams.get('type');
 
-    // Send connection confirmation
-    ws.send(JSON.stringify({
-      type: 'connected',
-      restaurantId
-    }));
+    console.log('WebSocket connection attempt:', { userId, restaurantId, type });
+
+    if (userId && restaurantId) {
+      clients.set(restaurantId, ws);
+      console.log(`Restaurant ${restaurantId} connected to WebSocket`);
+      
+      ws.on('close', () => {
+        clients.delete(restaurantId);
+        console.log(`Restaurant ${restaurantId} disconnected from WebSocket`);
+      });
+
+      // Send connection confirmation
+      ws.send(JSON.stringify({
+        type: 'connectionConfirmed',
+        message: 'Successfully connected to WebSocket server'
+      }));
+    } else {
+      console.log('Invalid connection attempt - missing parameters');
+      ws.close();
+    }
+  } catch (error) {
+    console.error('Error in WebSocket connection:', error);
+    ws.close();
+  }
+});
+
+// Update the server upgrade handling
+server.on('upgrade', (request, socket, head) => {
+  try {
+    const pathname = new URL(request.url, `ws://${request.headers.host}`).pathname;
+    
+    if (pathname === '/ws') {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+    } else {
+      socket.destroy();
+    }
+  } catch (error) {
+    console.error('Error in upgrade handling:', error);
+    socket.destroy();
   }
 });
 

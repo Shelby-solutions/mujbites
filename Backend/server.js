@@ -22,14 +22,43 @@ mongoose.set('strictQuery', true);
 // Create HTTP server
 const server = http.createServer(app);
 
-// Initialize WebSocket server
-// Remove this first declaration
+// Initialize WebSocket server after HTTP server creation
 const wss = new WebSocket.Server({ server });
 
 // Store connected clients
 const clients = new Map();
 
-// Remove the first notifyRestaurant function (lines 27-38) and keep only this updated version
+// WebSocket connection handling
+wss.on('connection', (ws, req) => {
+  try {
+    const url = new URL(req.url, `ws://${req.headers.host}`);
+    const userId = url.searchParams.get('userId');
+    const restaurantId = url.searchParams.get('restaurantId');
+    const type = url.searchParams.get('type');
+
+    console.log('WebSocket connection attempt:', { userId, restaurantId, type });
+
+    if (userId && restaurantId) {
+      clients.set(restaurantId, ws);
+      console.log(`Restaurant ${restaurantId} connected to WebSocket`);
+      
+      ws.on('close', () => {
+        clients.delete(restaurantId);
+        console.log(`Restaurant ${restaurantId} disconnected from WebSocket`);
+      });
+
+      ws.send(JSON.stringify({
+        type: 'connectionConfirmed',
+        message: 'Successfully connected to WebSocket server'
+      }));
+    }
+  } catch (error) {
+    console.error('Error in WebSocket connection:', error);
+    ws.close();
+  }
+});
+
+// Update notifyRestaurant function
 const notifyRestaurant = (restaurantId, orderData) => {
   try {
     console.log('Attempting to notify restaurant:', restaurantId);
@@ -50,31 +79,6 @@ const notifyRestaurant = (restaurantId, orderData) => {
     console.error('Error sending notification:', error);
   }
 };
-
-// WebSocket connection handling
-wss.on('connection', (ws, req) => {
-  const url = new URL(req.url, 'ws://localhost');
-  const userId = url.searchParams.get('userId');
-  const restaurantId = url.searchParams.get('restaurantId');
-
-  console.log('WebSocket connection attempt:', { userId, restaurantId });
-
-  if (userId && restaurantId) {
-    clients.set(restaurantId, ws);
-    console.log(`Restaurant ${restaurantId} connected to WebSocket`);
-    
-    ws.on('close', () => {
-      clients.delete(restaurantId);
-      console.log(`Restaurant ${restaurantId} disconnected from WebSocket`);
-    });
-
-    // Send a test message to confirm connection
-    ws.send(JSON.stringify({
-      type: 'connectionConfirmed',
-      message: 'Successfully connected to WebSocket server'
-    }));
-  }
-});
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
