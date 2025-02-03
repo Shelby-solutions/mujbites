@@ -16,7 +16,7 @@ const wss = new WebSocket.Server({ server });
 // Store connected clients
 const clients = new Map();
 
-// Attach WebSocket server to HTTP server
+// WebSocket connection handling
 wss.on('connection', (ws, req) => {
   try {
     const url = new URL(req.url, `ws://${req.headers.host}`);
@@ -27,7 +27,7 @@ wss.on('connection', (ws, req) => {
     console.log('WebSocket connection attempt:', { userId, restaurantId, type });
 
     if (userId && restaurantId) {
-      clients.set(restaurantId, ws);  // Use local clients Map
+      clients.set(restaurantId, ws);
       console.log(`Restaurant ${restaurantId} connected to WebSocket`);
       
       ws.on('close', () => {
@@ -46,8 +46,8 @@ wss.on('connection', (ws, req) => {
   }
 });
 
-// Define global notifyRestaurant function
-global.notifyRestaurant = function(restaurantId, orderData) {
+// Define notifyRestaurant function
+const notifyRestaurant = (restaurantId, orderData) => {
   try {
     console.log('Attempting to notify restaurant:', restaurantId);
     const client = clients.get(restaurantId);
@@ -70,4 +70,7 @@ global.notifyRestaurant = function(restaurantId, orderData) {
     return false;
   }
 };
-module.exports = { server };
+
+// Make notifyRestaurant available globally
+global.notifyRestaurant = notifyRestaurant;
+module.exports = { server, notifyRestaurant };
