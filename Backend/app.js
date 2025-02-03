@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const WebSocket = require('ws');
 require('dotenv').config();
 
-const app = express();
+const app = express();  // Keep only this declaration
 
 // Create WebSocket server
 const wss = new WebSocket.Server({ noServer: true });
@@ -58,6 +58,25 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// MongoDB connection
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log('Connected to MongoDB'))
+  .catch(err => console.error('MongoDB connection error:', err));
+
+// Routes
+const userRoutes = require('./routes/userRoutes');
+const restaurantRoutes = require('./routes/restaurantRoutes');
+const orderRoutes = require('./routes/orders');
+const recaptchaRouter = require('./routes/recaptchaRouter');
+const cartRoutes = require('./routes/cartRoutes');
+
+// Mount routes
+app.use('/api/restaurants', restaurantRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api/verify', recaptchaRouter);
+app.use('/api/cart', cartRoutes);
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
@@ -68,14 +87,8 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Routes
-const userRoutes = require('./routes/userRoutes');
-const restaurantRoutes = require('./routes/restaurantRoutes');
-const orderRoutes = require('./routes/orders');
-
-app.use('/api/users', userRoutes);
-app.use('/api/restaurants', restaurantRoutes);
-app.use('/api/orders', orderRoutes);
+// Remove this export
+// module.exports = app;
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI)
@@ -87,5 +100,5 @@ app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
 
-// Export the notify function
+// Keep only one export at the end of the file
 module.exports = { app, notifyRestaurant };

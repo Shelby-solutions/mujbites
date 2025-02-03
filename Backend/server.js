@@ -5,177 +5,103 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const session = require('express-session');
+const MongoStore = require('connect-mongo');
 const auth = require('./middleware/authMiddleware');
 const Cart = require('./models/Cart');
+const { app } = require('./app');
+const http = require('http');
+const WebSocket = require('ws');
+const portfinder = require('portfinder');
 
+// Load environment variables
 dotenv.config();
 
-const app = express();
-const PORT = process.env.PORT || 5000;
+// Set mongoose options
+mongoose.set('strictQuery', true);
 
-// Updated CORS configuration
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+// Create HTTP server
+const server = http.createServer(app);
 
-// Disable certain Helmet middlewares that might block local development
-app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" },
-  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
-  contentSecurityPolicy: false,
-}));
+// Initialize WebSocket server
+const wss = new WebSocket.Server({ server });
 
-// Request parsing middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Store connected clients
+const clients = new Map();
 
-// Logging middleware
-app.use(morgan('dev'));
-
-// Session middleware
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || 'your-secret-key',
-    resave: false,
-    saveUninitialized: true,
-    cookie: { 
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-      maxAge: 24 * 60 * 60 * 1000 // 24 hours
-    }
-  })
-);
-
-// Request logging middleware
-app.use((req, res, next) => {
-  console.log('Request:', {
-    method: req.method,
-    path: req.path,
-    body: req.body,
-    headers: req.headers,
-  });
-  next();
-});
-
-// MongoDB connection
-const mongoURI = process.env.MONGODB_URI || process.env.MONGO_URI;
-
-mongoose
-  .connect(mongoURI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
-  .then(() => {
-    console.log('MongoDB connected successfully');
-  })
-  .catch((err) => {
-    console.error('MongoDB connection error:', err);
-    process.exit(1);
-  });
-
-// Import routes
-const restaurantRoutes = require('./routes/restaurantRoutes');
-const userRoutes = require('./routes/userRoutes');
-const orderRoutes = require('./routes/orders');
-const recaptchaRouter = require('./routes/recaptchaRouter');
-
-// Move cart routes to a separate file
-const cartRoutes = express.Router();
-
-cartRoutes.post('/add', auth, async (req, res) => {
-  try {
-    const { restaurantId, itemId, quantity, size } = req.body;
-    const userId = req.user.id;
-
-    let cart = await Cart.findOne({ user: userId });
-    if (!cart) {
-      cart = new Cart({ user: userId, items: [] });
-    }
-
-    const itemIndex = cart.items.findIndex(item => 
-      item.item.toString() === itemId && 
-      (!size || item.size === size)
-    );
-
-    if (itemIndex > -1) {
-      cart.items[itemIndex].quantity += quantity;
-    } else {
-      cart.items.push({
-        item: itemId,
-        quantity,
-        size,
-        restaurant: restaurantId
-      });
-    }
-
-    await cart.save();
-    res.json(cart);
-  } catch (err) {
-    res.status(500).json({ message: err.message });
+// Add notifyRestaurant function
+const notifyRestaurant = (restaurantId, orderData) => {
+  const client = clients.get(restaurantId);
+  if (client && client.readyState === WebSocket.OPEN) {
+    client.send(JSON.stringify({
+      type: 'newOrder',
+      order: orderData
+    }));
+    console.log(`Notification sent to restaurant ${restaurantId}`);
+  } else {
+    console.log(`Restaurant ${restaurantId} not connected to WebSocket`);
   }
-});
+};
 
-cartRoutes.get('/', auth, async (req, res) => {
-  try {
-    const cart = await Cart.findOne({ user: req.user.id })
-      .populate('items.item')
-      .populate('items.restaurant');
-    res.json(cart || { items: [] });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
+// WebSocket connection handling
+wss.on('connection', (ws, req) => {
+  const { userId, restaurantId } = req.query;
+  if (userId && restaurantId) {
+    clients.set(restaurantId, ws);
+    console.log(`Restaurant ${restaurantId} connected to WebSocket`);
+    
+    ws.on('close', () => {
+      clients.delete(restaurantId);
+      console.log(`Restaurant ${restaurantId} disconnected from WebSocket`);
+    });
   }
-});
-
-// API routes
-app.use('/api/restaurants', restaurantRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/orders', orderRoutes);
-app.use('/api/users', recaptchaRouter);
-app.use('/api/cart', cartRoutes);
-
-// Health check route
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK', timestamp: new Date() });
-});
-
-// 404 Route Not Found
-app.use((req, res) => {
-  res.status(404).json({ 
-    message: 'Route not found',
-    path: req.originalUrl 
-  });
-});
-
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error('Error details:', {
-    message: err.message,
-    stack: err.stack,
-    error: err,
-  });
-  
-  res.status(err.statusCode || 500).json({
-    message: err.message || 'Internal server error',
-    error: process.env.NODE_ENV === 'development' ? err : undefined
-  });
 });
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
   try {
     await mongoose.connection.close();
-    console.log('MongoDB connection closed due to app termination');
-    process.exit(0);
+    server.close(() => {
+      console.log('Server and MongoDB connection closed');
+      process.exit(0);
+    });
   } catch (err) {
-    console.error('Error closing MongoDB connection:', err);
+    console.error('Error during shutdown:', err);
     process.exit(1);
   }
 });
 
-// Start the server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+// Add startServer function
+const startServer = async () => {
+  try {
+    // Connect to MongoDB only once
+    if (mongoose.connection.readyState === 0) {  // Only connect if not connected
+      await mongoose.connect(process.env.MONGODB_URI, {
+        useNewUrlParser: true,
+        useUnifiedTopology: true
+      });
+      console.log('Connected to MongoDB');
+    }
+
+    // Use portfinder directly instead of manual check
+    const port = await portfinder.getPortPromise({
+      port: parseInt(process.env.PORT) || 3000,    // Start with desired port
+      stopPort: 65535                             // Maximum port number
+    });
+
+    server.listen(port, () => {
+      console.log(`Server running on port ${port}`);
+      console.log(`Environment: ${process.env.NODE_ENV}`);
+    });
+  } catch (err) {
+    console.error('Failed to start server:', err);
+    process.exit(1);
+  }
+};
+// Start server
+startServer().catch(err => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
 });
+
+// Export notification function
+module.exports = { notifyRestaurant };
