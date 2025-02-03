@@ -8,16 +8,15 @@ const session = require('express-session');
 const MongoStore = require('connect-mongo');
 const auth = require('./middleware/authMiddleware');
 const Cart = require('./models/Cart');
-const { app, wss, notifyRestaurant, handleUpgrade } = require('./app');
+const { app, wss } = require('./app');  // Remove notifyRestaurant from import
 const http = require('http');
 const portfinder = require('portfinder');
 
 // Create HTTP server
 const server = http.createServer(app);
 
-// Remove these duplicate declarations
-// const wss = new WebSocket.Server({ server });
-// const clients = new Map();
+// Store connected clients
+const clients = new Map();
 
 // Attach WebSocket server to HTTP server
 wss.on('connection', (ws, req) => {
@@ -30,12 +29,11 @@ wss.on('connection', (ws, req) => {
     console.log('WebSocket connection attempt:', { userId, restaurantId, type });
 
     if (userId && restaurantId) {
-      // Use the clients Map from app.js through the wss context
-      wss.clients.set(restaurantId, ws);
+      clients.set(restaurantId, ws);  // Use local clients Map
       console.log(`Restaurant ${restaurantId} connected to WebSocket`);
       
       ws.on('close', () => {
-        wss.clients.delete(restaurantId);
+        clients.delete(restaurantId);
         console.log(`Restaurant ${restaurantId} disconnected from WebSocket`);
       });
 
@@ -50,54 +48,27 @@ wss.on('connection', (ws, req) => {
   }
 });
 
-// Remove the entire notifyRestaurant function since it's imported from app.js
-
-// Graceful shutdown
-process.on('SIGINT', async () => {
+// Define notifyRestaurant function here
+function notifyRestaurant(restaurantId, orderData) {
   try {
-    await mongoose.connection.close();
-    server.close(() => {
-      console.log('Server and MongoDB connection closed');
-      process.exit(0);
-    });
-  } catch (err) {
-    console.error('Error during shutdown:', err);
-    process.exit(1);
-  }
-});
-
-// Add startServer function
-const startServer = async () => {
-  try {
-    // Connect to MongoDB only once
-    if (mongoose.connection.readyState === 0) {  // Only connect if not connected
-      await mongoose.connect(process.env.MONGODB_URI, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true
-      });
-      console.log('Connected to MongoDB');
+    console.log('Attempting to notify restaurant:', restaurantId);
+    const client = clients.get(restaurantId);
+    
+    if (client && client.readyState === WebSocket.OPEN) {
+      const notification = {
+        type: 'newOrder',
+        order: orderData
+      };
+      
+      client.send(JSON.stringify(notification));
+      console.log(`Notification sent to restaurant ${restaurantId}`);
+    } else {
+      console.log(`Restaurant ${restaurantId} not connected to WebSocket`);
     }
-
-    // Use portfinder directly instead of manual check
-    const port = await portfinder.getPortPromise({
-      port: parseInt(process.env.PORT) || 3000,    // Start with desired port
-      stopPort: 65535                             // Maximum port number
-    });
-
-    server.listen(port, () => {
-      console.log(`Server running on port ${port}`);
-      console.log(`Environment: ${process.env.NODE_ENV}`);
-    });
-  } catch (err) {
-    console.error('Failed to start server:', err);
-    process.exit(1);
+  } catch (error) {
+    console.error('Error sending notification:', error);
   }
-};
-// Start server
-startServer().catch(err => {
-  console.error('Failed to start server:', err);
-  process.exit(1);
-});
+}
 
-// Export only what's needed
-module.exports = { server };
+// Export both server and notifyRestaurant
+module.exports = { server, notifyRestaurant };
