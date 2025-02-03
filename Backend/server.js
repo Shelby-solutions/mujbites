@@ -6,12 +6,22 @@ const WebSocket = require('ws');
 const portfinder = require('portfinder');
 const { app } = require('./app');
 
-// Configure portfinder
-portfinder.basePort = process.env.PORT || 5000;
-portfinder.highestPort = 65535;
+// Configure port
+const PORT = process.env.PORT || 10000;
+
+// Validate port
+if (!PORT) {
+  console.error('Port is not defined');
+  process.exit(1);
+}
 
 // Create HTTP server with timeout settings
 const server = http.createServer(app);
+
+// Start server
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server is running on port ${PORT}`);
+});
 
 // Configure server timeouts
 server.timeout = 60000; // 60 seconds timeout
