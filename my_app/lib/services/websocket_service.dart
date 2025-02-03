@@ -32,7 +32,7 @@ class WebSocketService {
       }
 
       final wsUrl = Uri.parse(
-        'ws://localhost:5000/ws'  // Updated to match backend WebSocket endpoint
+        'wss://mujbites-app.onrender.com/ws'  // Updated to production WebSocket endpoint
       ).replace(
         queryParameters: {
           'userId': userId,

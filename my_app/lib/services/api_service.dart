@@ -150,16 +150,16 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> login(String mobileNumber, String password) async {
-    final maxRetries = 5;  // Increased retries
+  Future<Map<String, dynamic>> login(String identifier, String password) async {
+    final maxRetries = 5;
     int retryCount = 0;
-    Duration timeout = const Duration(seconds: 45);  // Increased timeout
+    Duration timeout = const Duration(seconds: 45);
 
     while (retryCount < maxRetries) {
       try {
         final headers = await getHeaders();
         final body = {
-          'mobileNumber': mobileNumber,
+          (identifier.contains('@') ? 'email' : 'mobileNumber'): identifier,
           'password': password,
         };
 
@@ -181,9 +181,10 @@ class ApiService {
           if (responseData['success'] == false) {
             throw Exception(responseData['message'] ?? 'Login failed');
           }
+          await _saveUserData(responseData);
           return responseData;
         } else if (response.statusCode == 401) {
-          throw Exception('Invalid credentials. Please check your mobile number and password.');
+          throw Exception('Invalid credentials. Please check your login details.');
         } else if (response.statusCode == 500) {
           final errorData = jsonDecode(response.body);
           if (errorData['error']?.toString().contains('timed out') == true) {
@@ -208,14 +209,12 @@ class ApiService {
         await Future.delayed(Duration(seconds: math.min(2 * (1 << retryCount), 10)));
       } on SocketException catch (_) {
         throw Exception('Network error. Please check your internet connection and try again.');
-      } on FormatException catch (_) {
-        throw Exception('Received invalid response from server. Please try again.');
       } catch (e) {
-        if (e is Exception) rethrow;
-        throw Exception('An unexpected error occurred. Please try again later.');
+        print('Login error: $e');
+        throw Exception('An error occurred during login. Please try again.');
       }
     }
-    throw Exception('Login failed after multiple attempts. Please try again later.');
+    throw Exception('Login failed after maximum retries. Please try again later.');
   }
 
   // Restaurant Methods
@@ -670,6 +669,22 @@ class ApiService {
       }
     } catch (e) {
       print('Error updating menu: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> _saveUserData(Map<String, dynamic> response) async {
+    try {
+      final user = response['user'] as Map<String, dynamic>;
+      await UserPreferences.saveUserData(
+        userId: user['_id'].toString(),
+        token: response['token'],
+        role: user['role'],
+        restaurantData: user['restaurant'],
+      );
+    } catch (e) {
+      print('Error saving user data: $e');
+      await UserPreferences.clear();
       rethrow;
     }
   }
