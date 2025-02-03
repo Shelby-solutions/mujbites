@@ -19,8 +19,12 @@ class RestaurantScreen extends StatefulWidget {
   State<RestaurantScreen> createState() => _RestaurantScreenState();
 }
 
-class _RestaurantScreenState extends State<RestaurantScreen> {
+class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerProviderStateMixin {
   final ApiService _apiService = ApiService();
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
+  
+  // Add these missing variables
   Map<String, dynamic>? _restaurant;
   List<Map<String, dynamic>> _menu = [];
   bool _isLoading = true;
@@ -31,69 +35,21 @@ class _RestaurantScreenState extends State<RestaurantScreen> {
   @override
   void initState() {
     super.initState();
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
+    );
     _fetchRestaurantData();
+    _animationController.forward();
   }
 
-  Future<void> _fetchRestaurantData() async {
-    try {
-      setState(() => _isLoading = true);
-      
-      final response = await _apiService.getRestaurantById(widget.restaurantId);
-      print('Raw response: $response'); // Debug print
-      
-      if (response is Map<String, dynamic>) {
-        final menuItems = response['menu'];
-        print('Menu items type: ${menuItems.runtimeType}'); // Debug print
-        print('Menu items content: $menuItems'); // Debug print
-        
-        setState(() {
-          _restaurant = response;
-          if (menuItems is List) {
-            _menu = menuItems.map((item) {
-              // Convert sizes object to list of maps
-              final sizesMap = item['sizes'] as Map<String, dynamic>;
-              final sizesList = sizesMap.entries.map((entry) => {
-                'name': entry.key,
-                'price': entry.value,
-              }).toList();
-              
-              return {
-                'id': item['_id'],
-                'name': item['itemName'],
-                'price': sizesMap.values.first, // Use smallest size price as default
-                'sizes': sizesList,
-                'category': item['category'] ?? 'Other',
-                'imageUrl': item['imageUrl'],
-                'isAvailable': item['isAvailable'] ?? true,
-              };
-            }).toList();
-          } else {
-            _menu = [];
-          }
-          _isLoading = false;
-          _error = null;
-        });
-      }
-    } catch (e) {
-      print('Error fetching restaurant data: $e');
-      setState(() {
-        _error = 'Failed to load restaurant data';
-        _isLoading = false;
-      });
-    }
-  }
-
-  List<Map<String, dynamic>> get _filteredItems {
-    return _menu.where((item) {
-      final matchesSearch = item['name'].toString().toLowerCase().contains(_searchQuery.toLowerCase());
-      final matchesCategory = _selectedCategory == 'All' || item['category'] == _selectedCategory;
-      return matchesSearch && matchesCategory;
-    }).toList();
-  }
-
-  List<String> get _categories {
-    final categories = _menu.map((item) => item['category'].toString()).toSet().toList();
-    return ['All', ...categories];
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
   }
 
   @override
@@ -128,6 +84,7 @@ class _RestaurantScreenState extends State<RestaurantScreen> {
         },
       ),
       body: CustomScrollView(
+        physics: const BouncingScrollPhysics(),
         slivers: [
           // Hero Section
           // Update the SliverAppBar and surrounding elements
@@ -314,10 +271,26 @@ class _RestaurantScreenState extends State<RestaurantScreen> {
                 crossAxisCount: MediaQuery.of(context).size.width > 600 ? 3 : 2,
                 mainAxisSpacing: 16,
                 crossAxisSpacing: 16,
-                childAspectRatio: 0.75,
+                childAspectRatio: MediaQuery.of(context).size.width > 600 ? 0.8 : 0.7,
               ),
               delegate: SliverChildBuilderDelegate(
-                (context, index) => _buildMenuItem(_filteredItems[index]),
+                (context, index) => FadeTransition(
+                  opacity: _fadeAnimation,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, 0.2),
+                      end: Offset.zero,
+                    ).animate(CurvedAnimation(
+                      parent: _animationController,
+                      curve: Interval(
+                        0.4 + (index * 0.1),
+                        1.0,
+                        curve: Curves.easeOut,
+                      ),
+                    )),
+                    child: _buildMenuItem(_filteredItems[index]),
+                  ),
+                ),
                 childCount: _filteredItems.length,
               ),
             ),
@@ -533,5 +506,350 @@ class _RestaurantScreenState extends State<RestaurantScreen> {
         ),
       );
     }
+  }
+
+  // Add these getter methods
+  List<String> get _categories {
+    final categories = _menu.map((item) => item['category'].toString()).toSet().toList();
+    return ['All', ...categories];
+  }
+
+  List<Map<String, dynamic>> get _filteredItems {
+    return _menu.where((item) {
+      final matchesSearch = item['name'].toString().toLowerCase().contains(_searchQuery.toLowerCase());
+      final matchesCategory = _selectedCategory == 'All' || item['category'] == _selectedCategory;
+      return matchesSearch && matchesCategory;
+    }).toList();
+  }
+
+  Future<void> _fetchRestaurantData() async {
+    try {
+      setState(() => _isLoading = true);
+      
+      final response = await _apiService.getRestaurantById(widget.restaurantId);
+      
+      if (response is Map<String, dynamic>) {
+        final menuItems = response['menu'];
+        
+        setState(() {
+          _restaurant = response;
+          if (menuItems is List) {
+            _menu = menuItems.map((item) {
+              final sizesMap = item['sizes'] as Map<String, dynamic>;
+              final sizesList = sizesMap.entries.map((entry) => {
+                'name': entry.key,
+                'price': entry.value,
+              }).toList();
+              
+              return {
+                'id': item['_id'],
+                'name': item['itemName'],
+                'price': sizesMap.values.first,
+                'sizes': sizesList,
+                'category': item['category'] ?? 'Other',
+                'imageUrl': item['imageUrl'],
+                'isAvailable': item['isAvailable'] ?? true,
+                'description': item['description'] ?? '',
+              };
+            }).toList();
+          }
+          _isLoading = false;
+          _error = null;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _error = 'Failed to load restaurant data';
+        _isLoading = false;
+      });
+    }
+  }
+
+  void _showItemDetails(Map<String, dynamic> item) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.8,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Item image with gradient overlay
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+                  child: Image.network(
+                    item['imageUrl'] ?? '',
+                    height: 200,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      height: 200,
+                      color: Colors.grey.shade200,
+                      child: Icon(Icons.restaurant, color: Colors.grey.shade400, size: 60),
+                    ),
+                  ),
+                ),
+
+                // Add gradient overlay
+                Container(
+                  height: 200,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        Colors.black.withOpacity(0.5),
+                      ],
+                    ),
+                  ),
+                ),
+                // Close button with background
+                Positioned(
+                  top: 16,
+                  right: 16,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.9),
+                      shape: BoxShape.circle,
+                    ),
+                    child: IconButton(
+                      icon: const Icon(Icons.close, color: Colors.black),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            // Item details
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item['name'] ?? '',
+                      style: GoogleFonts.playfairDisplay(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    if (item['description']?.isNotEmpty ?? false) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        item['description'],
+                        style: GoogleFonts.montserrat(
+                          fontSize: 14,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    // Size selection
+                    if (item['sizes']?.isNotEmpty ?? false) ...[
+                      Text(
+                        'Available Sizes',
+                        style: GoogleFonts.montserrat(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: (item['sizes'] as List).map((size) {
+                          return ChoiceChip(
+                            label: Text('${size['name']} - ₹${size['price']}'),
+                            selected: false,
+                            onSelected: (_) {},
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            // Add to cart button
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: ElevatedButton(
+                onPressed: () {
+                  _addToCart(item);
+                  Navigator.pop(context);
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primary,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Text(
+                  'Add to Cart',
+                  style: GoogleFonts.montserrat(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Update _buildMenuItem to include tap handler
+  Widget _buildMenuItemCard(Map<String, dynamic> item) {
+    final isAvailable = item['isAvailable'] ?? true;
+    final sizes = List<Map<String, dynamic>>.from(item['sizes'] ?? []);
+
+    return GestureDetector(
+      onTap: () => _showItemDetails(item),
+      child: Card(
+        elevation: 4,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Image section
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                  child: Image.network(
+                    item['imageUrl'] ?? '',
+                    height: 100,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      height: 100,
+                      width: double.infinity,
+                      color: Colors.grey.shade200,
+                      child: Icon(
+                        Icons.restaurant,
+                        color: Colors.grey.shade400,
+                        size: 40,
+                      ),
+                    ),
+                  ),
+                ),
+                if (!isAvailable)
+                  Container(
+                    height: 100,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                    ),
+                    child: Center(
+                      child: Text(
+                        'Currently Unavailable',
+                        style: GoogleFonts.montserrat(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            item['name'] ?? '',
+                            style: GoogleFonts.playfairDisplay(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Text(
+                          '₹${item['price']?.toString() ?? '0'}',
+                          style: GoogleFonts.montserrat(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (sizes.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          child: Wrap(
+                            spacing: 2,
+                            runSpacing: 2,
+                            children: sizes.map((size) {
+                              return Chip(
+                                label: Text(
+                                  '${size['name']} - ₹${size['price']}',
+                                  style: const TextStyle(fontSize: 10),
+                                ),
+                                backgroundColor: Colors.grey.shade100,
+                                padding: EdgeInsets.zero,
+                                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 4),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 32,
+                      child: ElevatedButton(
+                        onPressed: isAvailable ? () => _addToCart(item) : null,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.primary,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 0),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        child: Text(
+                          isAvailable ? 'Add to Cart' : 'Not Available',
+                          style: GoogleFonts.montserrat(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+   
   }
 }

@@ -22,11 +22,9 @@ wss.on('connection', (ws, req) => {
     const url = new URL(req.url, `ws://${req.headers.host}`);
     const userId = url.searchParams.get('userId');
     const restaurantId = url.searchParams.get('restaurantId');
-    const type = url.searchParams.get('type');
-
-    console.log('WebSocket connection attempt:', { userId, restaurantId, type });
 
     if (userId && restaurantId) {
+      ws.restaurantId = restaurantId; // Store restaurantId on the socket
       clients.set(restaurantId, ws);
       console.log(`Restaurant ${restaurantId} connected to WebSocket`);
       
@@ -49,22 +47,17 @@ wss.on('connection', (ws, req) => {
 // Define notifyRestaurant function
 const notifyRestaurant = (restaurantId, orderData) => {
   try {
-    console.log('Attempting to notify restaurant:', restaurantId);
-    const client = clients.get(restaurantId);
-    
-    if (client && client.readyState === WebSocket.OPEN) {
-      const notification = {
+    const ws = clients.get(restaurantId);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
         type: 'newOrder',
         order: orderData
-      };
-      
-      client.send(JSON.stringify(notification));
-      console.log(`Notification sent to restaurant ${restaurantId}`);
+      }));
+      console.log(`Order notification sent to restaurant ${restaurantId}`);
       return true;
-    } else {
-      console.log(`Restaurant ${restaurantId} not connected to WebSocket`);
-      return false;
     }
+    console.log(`Restaurant ${restaurantId} not connected to WebSocket`);
+    return false;
   } catch (error) {
     console.error('Error sending notification:', error);
     return false;

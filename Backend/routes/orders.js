@@ -29,11 +29,9 @@ router.post("/", authenticateToken, async (req, res) => {
 
     await order.save();
 
-    // Notify restaurant about new order using global function
+    // Notify restaurant using global function
     if (global.notifyRestaurant) {
       global.notifyRestaurant(restaurant, order);
-    } else {
-      console.warn('notifyRestaurant function not available');
     }
 
     res.status(201).json({
