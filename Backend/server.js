@@ -23,16 +23,21 @@ server.timeout = 60000; // 60 seconds timeout
 server.keepAliveTimeout = 30000; // 30 seconds keep-alive
 server.headersTimeout = 35000; // Slightly higher than keepAliveTimeout
 
-// Create WebSocket server
+// Create WebSocket server with improved settings
 const wss = new WebSocket.Server({ 
   noServer: true,
   clientTracking: true,
+  maxPayload: 50 * 1024 * 1024, // 50MB max payload
   perMessageDeflate: {
     zlibDeflateOptions: {
       chunkSize: 1024,
       memLevel: 7,
       level: 3
-    }
+    },
+    serverNoContextTakeover: true,
+    clientNoContextTakeover: true,
+    concurrencyLimit: 10,
+    threshold: 1024
   }
 });
 
@@ -123,19 +128,31 @@ wss.on('close', () => {
   clearInterval(interval);
 });
 
-// Handle WebSocket upgrade
+// Handle WebSocket upgrade with improved error handling
 server.on('upgrade', (request, socket, head) => {
-  const url = new URL(request.url, `ws://${request.headers.host}`);
-  const token = url.searchParams.get('token');
-  
-  if (!token) {
-    socket.destroy();
-    return;
-  }
+  try {
+    const url = new URL(request.url, `ws://${request.headers.host}`);
+    const token = url.searchParams.get('token');
+    
+    if (!token) {
+      console.log('WebSocket upgrade rejected: Missing token');
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
 
-  wss.handleUpgrade(request, socket, head, (ws) => {
-    wss.emit('connection', ws, request);
-  });
+    // Set socket timeout
+    socket.setTimeout(30000);
+    socket.setKeepAlive(true, 30000);
+
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request);
+    });
+  } catch (error) {
+    console.error('Error during WebSocket upgrade:', error);
+    socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
+    socket.destroy();
+  }
 });
 
 // Start server

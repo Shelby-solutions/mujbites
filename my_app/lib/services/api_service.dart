@@ -7,10 +7,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:my_app/services/user_preferences.dart';
 
-class ApiService {
-  static const bool useProductionUrl = true; // Toggle this for development/production
-  static const int connectionTimeout = 30; // Connection timeout in seconds
-  static const int maxRetries = 3; // Maximum number of retry attempts
+class ApiService {  static const bool useProductionUrl = true;
+  static const int connectionTimeout = 30; // Increased timeout for slower connections
+  static const int maxRetries = 5;
+  static const Duration initialRetryDelay = Duration(seconds: 2); // Increased initial retry delay
+  static const Duration maxRetryDelay = Duration(seconds: 10); // Maximum retry delay
 
   static String get baseUrl {
     if (useProductionUrl) {
@@ -38,6 +39,8 @@ class ApiService {
     }
     return {
       'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Origin': useProductionUrl ? 'https://mujbites-app.onrender.com' : 'http://localhost:5000',
       if (token != null) 'Authorization': 'Bearer $token',
     };
   }
@@ -93,7 +96,10 @@ class ApiService {
         if (retryCount < maxRetries - 1) {
           retryCount++;
           print('Request timed out. Retrying (${retryCount}/${maxRetries})');
-          await Future.delayed(Duration(seconds: math.min(2 * (1 << retryCount), 10)));
+          // Implement exponential backoff with jitter
+          final backoffMs = math.min(1000 * (1 << retryCount), 10000);
+          final jitter = math.Random().nextInt(1000);
+          await Future.delayed(Duration(milliseconds: backoffMs + jitter));
           continue;
         }
         throw Exception('Connection timed out. Please check your internet connection and try again.');
@@ -151,70 +157,58 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> login(String identifier, String password) async {
-    final maxRetries = 5;
     int retryCount = 0;
-    Duration timeout = const Duration(seconds: 45);
+    Duration retryDelay = initialRetryDelay;
 
     while (retryCount < maxRetries) {
       try {
-        final headers = await getHeaders();
-        final body = {
-          (identifier.contains('@') ? 'email' : 'mobileNumber'): identifier,
-          'password': password,
-        };
+        print('\n=== Login Attempt ${retryCount + 1}/${maxRetries} ===');
+        print('Timeout set to: ${connectionTimeout} seconds');
 
         final response = await http.post(
           getUri('/users/login'),
-          headers: headers,
-          body: jsonEncode(body),
-        ).timeout(
-          timeout,
-          onTimeout: () {
-            throw TimeoutException(
-              'Request timed out. Server might be busy. Retrying...',
-            );
-          },
-        );
+          headers: await getHeaders(),
+          body: jsonEncode({
+            'identifier': identifier,
+            'password': password,
+          }),
+        ).timeout(Duration(seconds: connectionTimeout));
 
-        if (response.statusCode == 200) {
-          final responseData = jsonDecode(response.body);
-          if (responseData['success'] == false) {
-            throw Exception(responseData['message'] ?? 'Login failed');
-          }
-          await _saveUserData(responseData);
+        // Reset connection state tracking
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          await UserPreferences.setBool('isLoggedIn', true);
+        }
+
+        print('Response status: ${response.statusCode}');
+        final responseData = jsonDecode(response.body);
+
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          print('Login successful');
           return responseData;
-        } else if (response.statusCode == 401) {
-          throw Exception('Invalid credentials. Please check your login details.');
-        } else if (response.statusCode == 500) {
-          final errorData = jsonDecode(response.body);
-          if (errorData['error']?.toString().contains('timed out') == true) {
-            if (retryCount < maxRetries - 1) {
-              retryCount++;
-              await Future.delayed(Duration(seconds: math.min(2 * (1 << retryCount), 10)));
-              continue;
-            }
-            throw TimeoutException('Server is experiencing high load. Please try again in a few moments.');
-          }
-          throw Exception(errorData['message'] ?? 'Server error. Please try again.');
-        } else if (response.statusCode == 503) {
-          throw Exception('Service temporarily unavailable. Please try again later.');
         } else {
-          throw Exception('Login failed. Please try again later.');
+          print('Login failed with status: ${response.statusCode}');
+          print('Response body: ${response.body}');
+          throw Exception(responseData['message'] ?? 'Login failed');
         }
       } on TimeoutException catch (_) {
-        retryCount++;
-        if (retryCount >= maxRetries) {
-          throw Exception('Unable to connect to the server. Please check your internet connection and try again.');
+        print('Request timed out (attempt ${retryCount + 1})');
+        if (retryCount >= maxRetries - 1) {
+          throw Exception('Connection timed out. Please check your internet connection.');
         }
+        retryCount++;
         await Future.delayed(Duration(seconds: math.min(2 * (1 << retryCount), 10)));
-      } on SocketException catch (_) {
-        throw Exception('Network error. Please check your internet connection and try again.');
+      } on SocketException catch (e) {
+        print('Network error: $e');
+        throw Exception('Network error. Please check your internet connection.');
+      } on FormatException catch (e) {
+        print('Invalid response format: $e');
+        throw Exception('Server returned an invalid response. Please try again.');
       } catch (e) {
         print('Login error: $e');
-        throw Exception('An error occurred during login. Please try again.');
+        throw Exception('An unexpected error occurred. Please try again.');
       }
     }
-    throw Exception('Login failed after maximum retries. Please try again later.');
+    throw Exception('Login failed after ${maxRetries} attempts. Please try again later.');
   }
 
   // Restaurant Methods

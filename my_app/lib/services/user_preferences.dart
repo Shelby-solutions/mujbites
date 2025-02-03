@@ -167,4 +167,11 @@ class UserPreferences {
     await _logAccess('getString', key, value);
     return value;
   }
-} 
+
+  static Future<bool> setBool(String key, bool value) async {
+    await _logAccess('setBool', key, value);
+    final prefs = await SharedPreferences.getInstance();
+    final result = await prefs.setBool(key, value);
+    return result;
+  }
+}

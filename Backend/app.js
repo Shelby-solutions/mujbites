@@ -7,20 +7,38 @@ const app = express();
 
 // CORS configuration
 app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://localhost',
-    'http://10.0.2.2:5000',
-    'http://localhost:5000',
-    'http://127.0.0.1:5000',
-    'ws://localhost:5000',
-    'https://mujbites-app.onrender.com',
-    'wss://mujbites-app.onrender.com',
-  ],
+  origin: function(origin, callback) {
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'http://localhost',
+      'http://10.0.2.2:5000',
+      'http://localhost:5000',
+      'http://127.0.0.1:5000',
+      'ws://localhost:5000',
+      'https://mujbites-app.onrender.com',
+      'wss://mujbites-app.onrender.com'
+    ];
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With']
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+  exposedHeaders: ['Content-Length', 'X-Requested-With'],
+  maxAge: 86400
 }));
+
+// Add security headers
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  next();
+});
 
 // Middleware
 app.use(express.json());
