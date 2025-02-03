@@ -1,9 +1,17 @@
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const connectDB = require('./config/db');
 require('dotenv').config();
 
+// Initialize Express app
 const app = express();
+
+// Connect to MongoDB
+connectDB().catch(err => {
+  console.error('Failed to connect to MongoDB:', err);
+  process.exit(1);
+});
 
 // CORS configuration
 app.use(cors({
@@ -74,12 +82,5 @@ app.use((err, req, res, next) => {
     error: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });
-
-// Export app and WebSocket server
-// Export the handleUpgrade function along with other exports
-// Remove these lines from app.js
-// const WebSocket = require('ws');
-// const wss = new WebSocket.Server({ noServer: true });
-// const clients = new Map();
 
 module.exports = { app };  // Only export app
