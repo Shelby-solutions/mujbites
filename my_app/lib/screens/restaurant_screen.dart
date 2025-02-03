@@ -9,6 +9,7 @@ import '../theme/app_theme.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../widgets/cart.dart';
 import '../widgets/loading_screen.dart';
+import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 
 class RestaurantScreen extends StatefulWidget {
   final String restaurantId;
@@ -19,10 +20,16 @@ class RestaurantScreen extends StatefulWidget {
   State<RestaurantScreen> createState() => _RestaurantScreenState();
 }
 
+// Add new import for animations
+
 class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerProviderStateMixin {
   final ApiService _apiService = ApiService();
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
+  
+  // Add scroll controller and offset
+  late ScrollController _scrollController;
+  double _scrollOffset = 0;
   
   // Add these missing variables
   Map<String, dynamic>? _restaurant;
@@ -35,6 +42,14 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
   @override
   void initState() {
     super.initState();
+    _scrollController = ScrollController()
+      ..addListener(() {
+        if (mounted) {  // Add mounted check
+          setState(() {
+            _scrollOffset = _scrollController.offset;
+          });
+        }
+      });
     _animationController = AnimationController(
       duration: const Duration(milliseconds: 800),
       vsync: this,
@@ -42,12 +57,74 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
     );
-    _fetchRestaurantData();
+    // Add error handling for data fetching
+    _fetchRestaurantData().catchError((error) {
+      if (mounted) {
+        setState(() {
+          _error = 'Failed to connect to server. Please check your internet connection.';
+          _isLoading = false;
+        });
+      }
+    });
     _animationController.forward();
+  }
+
+  // Keep only this enhanced version of _fetchRestaurantData
+  Future<void> _fetchRestaurantData() async {
+    try {
+      if (!mounted) return;
+      setState(() => _isLoading = true);
+      
+      final response = await _apiService.getRestaurantById(widget.restaurantId)
+          .timeout(const Duration(seconds: 10));
+      
+      if (!mounted) return;
+      
+      if (response is Map<String, dynamic>) {
+        final menuItems = response['menu'];
+        
+        setState(() {
+          _restaurant = response;
+          if (menuItems is List) {
+            _menu = menuItems.map((item) {
+              try {
+                final sizesMap = item['sizes'] as Map<String, dynamic>;
+                final sizesList = sizesMap.entries.map((entry) => {
+                  'name': entry.key,
+                  'price': entry.value,
+                }).toList();
+                
+                return {
+                  'id': item['_id'],
+                  'name': item['itemName'],
+                  'price': sizesMap.values.first,
+                  'sizes': sizesList,
+                  'category': item['category'] ?? 'Other',
+                  'imageUrl': item['imageUrl'],
+                  'isAvailable': item['isAvailable'] ?? true,
+                  'description': item['description'] ?? '',
+                };
+              } catch (e) {
+                return null;
+              }
+            }).whereType<Map<String, dynamic>>().toList();
+          }
+          _isLoading = false;
+          _error = null;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Failed to load restaurant data. Please try again.';
+        _isLoading = false;
+      });
+    }
   }
 
   @override
   void dispose() {
+    _scrollController.dispose(); // Add controller disposal
     _animationController.dispose();
     super.dispose();
   }
@@ -73,17 +150,36 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
     }
 
     return Scaffold(
-      floatingActionButton: CartButton(
-        onTap: () {
-          showModalBottomSheet(
-            context: context,
-            isScrollControlled: true,
-            backgroundColor: Colors.transparent,
-            builder: (context) => CartWidget(onClose: () => Navigator.pop(context)),
-          );
-        },
+      // Add blur effect to app bar when scrolling
+      extendBodyBehindAppBar: true,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(0),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          color: Colors.black.withOpacity(_scrollOffset > 300 ? 0.5 : 0),
+          child: AppBar(backgroundColor: Colors.transparent),
+        ),
+      ),
+      floatingActionButton: AnimatedSlide(
+        duration: const Duration(milliseconds: 300),
+        offset: Offset(0, _scrollOffset > 100 ? 0 : 2),
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 300),
+          opacity: _scrollOffset > 100 ? 1 : 0,
+          child: CartButton(
+            onTap: () {
+              showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: Colors.transparent,
+                builder: (context) => CartWidget(onClose: () => Navigator.pop(context)),
+              );
+            },
+          ),
+        ),
       ),
       body: CustomScrollView(
+        controller: _scrollController,
         physics: const BouncingScrollPhysics(),
         slivers: [
           // Hero Section
@@ -288,7 +384,7 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
                         curve: Curves.easeOut,
                       ),
                     )),
-                    child: _buildMenuItem(_filteredItems[index]),
+                    child: _buildMenuItemCard(_filteredItems[index]),
                   ),
                 ),
                 childCount: _filteredItems.length,
@@ -510,7 +606,10 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
 
   // Add these getter methods
   List<String> get _categories {
-    final categories = _menu.map((item) => item['category'].toString()).toSet().toList();
+    final categories = _menu
+        .map((item) => item['category'].toString())
+        .toSet()
+        .toList();
     return ['All', ...categories];
   }
 
@@ -522,47 +621,19 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
     }).toList();
   }
 
-  Future<void> _fetchRestaurantData() async {
-    try {
-      setState(() => _isLoading = true);
-      
-      final response = await _apiService.getRestaurantById(widget.restaurantId);
-      
-      if (response is Map<String, dynamic>) {
-        final menuItems = response['menu'];
-        
-        setState(() {
-          _restaurant = response;
-          if (menuItems is List) {
-            _menu = menuItems.map((item) {
-              final sizesMap = item['sizes'] as Map<String, dynamic>;
-              final sizesList = sizesMap.entries.map((entry) => {
-                'name': entry.key,
-                'price': entry.value,
-              }).toList();
-              
-              return {
-                'id': item['_id'],
-                'name': item['itemName'],
-                'price': sizesMap.values.first,
-                'sizes': sizesList,
-                'category': item['category'] ?? 'Other',
-                'imageUrl': item['imageUrl'],
-                'isAvailable': item['isAvailable'] ?? true,
-                'description': item['description'] ?? '',
-              };
-            }).toList();
-          }
-          _isLoading = false;
-          _error = null;
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _error = 'Failed to load restaurant data';
-        _isLoading = false;
-      });
-    }
+  // Enhanced menu item card with animations and tap functionality
+  Widget _buildAnimatedMenuItemCard(Map<String, dynamic> item) {
+    return AnimationConfiguration.staggeredGrid(
+      position: _menu.indexOf(item),
+      duration: const Duration(milliseconds: 375),
+      columnCount: 2,
+      child: SlideAnimation(
+        verticalOffset: 50.0,
+        child: FadeInAnimation(
+          child: _buildMenuItemCard(item)
+        ),
+      ),
+    );
   }
 
   void _showItemDetails(Map<String, dynamic> item) {
@@ -709,7 +780,7 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
     );
   }
 
-  // Update _buildMenuItem to include tap handler
+  // Base menu item card with content and tap handler
   Widget _buildMenuItemCard(Map<String, dynamic> item) {
     final isAvailable = item['isAvailable'] ?? true;
     final sizes = List<Map<String, dynamic>>.from(item['sizes'] ?? []);
@@ -850,6 +921,5 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
         ),
       ),
     );
-   
   }
 }
