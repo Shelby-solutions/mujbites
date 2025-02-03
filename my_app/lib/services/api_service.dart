@@ -43,35 +43,65 @@ class ApiService {
     String method = 'GET',
     Map<String, dynamic>? body,
   }) async {
-    try {
-      final headers = await getHeaders();
-      final uri = getUri(path);
-      
-      http.Response response;
-      
-      switch (method) {
-        case 'GET':
-          response = await http.get(uri, headers: headers);
-          break;
-        case 'POST':
-          response = await http.post(uri, headers: headers, body: jsonEncode(body));
-          break;
-        case 'PUT':
-          response = await http.put(uri, headers: headers, body: jsonEncode(body));
-          break;
-        default:
-          throw Exception('Unsupported method: $method');
-      }
+    final maxRetries = 3;
+    int retryCount = 0;
+    Duration timeout = const Duration(seconds: 30);
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        return jsonDecode(response.body);
-      } else {
-        throw Exception('Request failed with status: ${response.statusCode}');
+    while (retryCount < maxRetries) {
+      try {
+        final headers = await getHeaders();
+        final uri = getUri(path);
+        
+        http.Response response;
+        
+        switch (method) {
+          case 'GET':
+            response = await http.get(uri, headers: headers).timeout(timeout);
+            break;
+          case 'POST':
+            response = await http.post(uri, headers: headers, body: jsonEncode(body)).timeout(timeout);
+            break;
+          case 'PUT':
+            response = await http.put(uri, headers: headers, body: jsonEncode(body)).timeout(timeout);
+            break;
+          default:
+            throw Exception('Unsupported method: $method');
+        }
+
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          return jsonDecode(response.body);
+        } else if (response.statusCode == 401) {
+          throw Exception('Unauthorized access. Please login again.');
+        } else if (response.statusCode == 500) {
+          final errorData = jsonDecode(response.body);
+          if (errorData['error']?.toString().contains('timed out') == true) {
+            if (retryCount < maxRetries - 1) {
+              retryCount++;
+              await Future.delayed(Duration(seconds: 2 * (1 << retryCount)));
+              continue;
+            }
+            throw TimeoutException('Server is currently busy. Please try again in a few moments.');
+          }
+          throw Exception(errorData['message'] ?? 'An error occurred on the server.');
+        } else {
+          throw Exception('Request failed with status: ${response.statusCode}');
+        }
+      } on TimeoutException catch (_) {
+        retryCount++;
+        if (retryCount >= maxRetries) {
+          throw Exception('Request timed out. Please check your connection and try again.');
+        }
+        await Future.delayed(Duration(seconds: 2 * (1 << retryCount)));
+      } on SocketException catch (_) {
+        throw Exception('Network error. Please check your internet connection.');
+      } on FormatException catch (_) {
+        throw Exception('Received invalid response from server.');
+      } catch (e) {
+        print('API request error: $e');
+        rethrow;
       }
-    } catch (e) {
-      print('API request error: $e');
-      rethrow;
     }
+    throw Exception('Request failed after multiple attempts. Please try again later.');
   }
 
   // Authentication Methods
@@ -111,7 +141,7 @@ class ApiService {
   Future<Map<String, dynamic>> login(String mobileNumber, String password) async {
     final maxRetries = 3;
     int retryCount = 0;
-    Duration timeout = const Duration(seconds: 15);
+    Duration timeout = const Duration(seconds: 30); // Increased timeout
 
     while (retryCount < maxRetries) {
       try {
@@ -131,7 +161,7 @@ class ApiService {
             throw TimeoutException(
               retryCount < maxRetries - 1
                   ? 'Connection timed out. Retrying...'
-                  : 'Connection timed out. Please check your internet connection.',
+                  : 'Connection timed out. Please try again later.',
             );
           },
         );
@@ -143,28 +173,34 @@ class ApiService {
           }
           return responseData;
         } else if (response.statusCode == 401) {
-          throw Exception('Invalid mobile number or password');
+          throw Exception('Invalid credentials. Please check your mobile number and password.');
         } else if (response.statusCode == 500) {
           final errorData = jsonDecode(response.body);
           if (errorData['error']?.toString().contains('timed out') == true) {
-            throw TimeoutException('Server is busy. Please try again in a moment.');
+            if (retryCount < maxRetries - 1) {
+              retryCount++;
+              await Future.delayed(Duration(seconds: 2 * (1 << retryCount)));
+              continue;
+            }
+            throw TimeoutException('Server is currently busy. Please try again in a few moments.');
           }
-          throw Exception(errorData['message'] ?? 'Server error occurred');
+          throw Exception(errorData['message'] ?? 'An error occurred on the server. Please try again.');
         } else {
-          throw Exception('Login failed. Please try again.');
+          throw Exception('Login failed. Please try again later.');
         }
       } on TimeoutException catch (e) {
         retryCount++;
         if (retryCount >= maxRetries) {
-          throw Exception('Unable to connect to server. Please check your internet connection and try again.');
+          throw Exception('Unable to connect to the server. Please check your internet connection and try again.');
         }
-        // Exponential backoff
         await Future.delayed(Duration(seconds: 2 * (1 << retryCount)));
+      } on SocketException catch (_) {
+        throw Exception('Network error. Please check your internet connection.');
       } on FormatException catch (_) {
-        throw Exception('Server returned invalid data. Please try again.');
+        throw Exception('Received invalid response from server. Please try again.');
       } catch (e) {
         if (e is Exception) rethrow;
-        throw Exception('An unexpected error occurred. Please try again.');
+        throw Exception('An unexpected error occurred. Please try again later.');
       }
     }
     throw Exception('Login failed after multiple attempts. Please try again later.');
