@@ -37,6 +37,7 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
   @override
   void initState() {
     super.initState();
+    _initializeNotifications();
     _loadUserData();
     _fetchRestaurantData();
   }
@@ -804,4 +805,4 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
         .fold(0.0, (sum, order) => sum + (order['totalAmount'] ?? 0))
         .toStringAsFixed(2);
   }
-} 
+}

@@ -23,7 +23,9 @@ class NotificationService {
   Future<void> initialize() async {
     if (_isInitialized) return;
 
-    // Configure background handling
+    // Request background permissions
+    await _requestBackgroundPermissions();
+
     await _notifications.initialize(
       InitializationSettings(
         android: const AndroidInitializationSettings('@mipmap/ic_launcher'),
@@ -31,6 +33,7 @@ class NotificationService {
           requestAlertPermission: true,
           requestBadgePermission: true,
           requestSoundPermission: true,
+          requestCriticalPermission: true, // For critical notifications
           notificationCategories: [
             DarwinNotificationCategory(
               'order_category',
@@ -38,8 +41,9 @@ class NotificationService {
                 DarwinNotificationAction.plain('accept', 'Accept'),
                 DarwinNotificationAction.plain('reject', 'Reject'),
               ],
-              options: <DarwinNotificationCategoryOption>{
+              options: {
                 DarwinNotificationCategoryOption.hiddenPreviewShowTitle,
+                DarwinNotificationCategoryOption.allowAnnouncement,
               },
             ),
           ],
@@ -49,21 +53,95 @@ class NotificationService {
       onDidReceiveBackgroundNotificationResponse: _handleBackgroundNotificationResponse,
     );
 
-    // Request permissions with provisional authorization
-    if (!kIsWeb && Platform.isIOS) {
-      await _notifications
-          .resolvePlatformSpecificImplementation<
-              IOSFlutterLocalNotificationsPlugin>()
-          ?.requestPermissions(
-            alert: true,
-            badge: true,
-            sound: true,
-            critical: true, // For high-priority notifications
-            provisional: true, // For provisional authorization
-          );
-    }
-
+    // Set up background message handling
+    _setupBackgroundHandler();
     _isInitialized = true;
+  }
+
+  Future<void> _requestBackgroundPermissions() async {
+    if (Platform.isAndroid) {
+      await ph.Permission.notification.request();
+      // Request background running permission
+      await ph.Permission.ignoreBatteryOptimizations.request();
+    }
+  }
+
+  void _setupBackgroundHandler() {
+    _channel?.stream.listen(
+      (message) async {
+        final data = jsonDecode(message);
+        if (data['type'] == 'newOrder') {
+          await showOrderNotification(
+            'New Order!',
+            'Order #${data['order']['_id'].toString().substring(0, 6)}',
+            payload: {'orderData': data['order']},
+          );
+        }
+      },
+      onError: (error) {
+        print('WebSocket error: $error');
+        _reconnect();
+      },
+      onDone: () {
+        print('WebSocket connection closed');
+        _reconnect();
+      },
+    );
+  }
+
+  void _handleNewOrder(Map<String, dynamic> orderData) async {
+    await showOrderNotification(
+      'New Order Received!',
+      'Order #${orderData['_id'].toString().substring(orderData['_id'].toString().length - 6)}',
+      payload: {'orderData': orderData},
+    );
+    onNewOrder?.call(orderData);
+  }
+
+  Future<void> showOrderNotification(
+    String title,
+    String body, {
+    Map<String, dynamic>? payload,
+  }) async {
+    final androidDetails = AndroidNotificationDetails(
+      'restaurant_orders',
+      'Restaurant Orders',
+      channelDescription: 'Notifications for new restaurant orders',
+      importance: Importance.max,
+      priority: Priority.high,
+      enableVibration: true,
+      playSound: true,
+      sound: RawResourceAndroidNotificationSound('notification_sound'),
+      category: AndroidNotificationCategory.alarm,
+      fullScreenIntent: true,
+      visibility: NotificationVisibility.public,
+      actions: [
+        AndroidNotificationAction('accept', 'Accept'),
+        AndroidNotificationAction('reject', 'Reject'),
+      ],
+    );
+
+    final iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+      sound: 'notification_sound.aiff',
+      categoryIdentifier: 'order_category',
+      interruptionLevel: InterruptionLevel.timeSensitive,
+    );
+
+    final details = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+
+    await _notifications.show(
+      DateTime.now().millisecond,
+      title,
+      body,
+      details,
+      payload: payload != null ? jsonEncode(payload) : null,
+    );
   }
 
   String get _wsUrl {
@@ -99,17 +177,6 @@ class NotificationService {
       print('WebSocket connection error: $e');
       _reconnect();
     }
-  }
-
-  void _handleNewOrder(Map<String, dynamic> orderData) async {
-    // Show local notification
-    await _showNotification(
-      'New Order Received!',
-      'Order #${orderData['_id'].toString().substring(orderData['_id'].toString().length - 6)}',
-    );
-
-    // Call the callback if set
-    onNewOrder?.call(orderData);
   }
 
   static void _handleBackgroundNotificationResponse(NotificationResponse details) {
@@ -250,4 +317,4 @@ class NotificationService {
       ),
     );
   }
-} 
+}

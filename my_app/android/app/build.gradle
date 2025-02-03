@@ -7,13 +7,12 @@ plugins {
 
 android {
     namespace = "com.mujbites.mujbites"
-    compileSdk = 34  // Fixed value (Flutter default is 34)
-    ndkVersion = "25.1.8937393"  // Correct NDK version as required
+    compileSdk = 34
+    ndkVersion = "25.1.8937393"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-        // Enable core library desugaring for Java 8+ language features
         coreLibraryDesugaringEnabled true
     }
 
@@ -23,42 +22,34 @@ android {
 
     defaultConfig {
         applicationId = "com.mujbites.mujbites"
-        minSdk = 21  // Ensure minSdk is defined correctly
-        targetSdk = 34  // Ensure targetSdk is set correctly
+        minSdk = 21
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0.0"
+        multiDexEnabled true
     }
 
-    // Place signingConfigs before buildTypes
     signingConfigs {
         release {
-            storeFile file("./key.jks")  // Path to your keystore file (inside android/app/)
-            storePassword "Camila@19"     // Replace with your actual password (or use a secure method)
+            storeFile file("key.jks")
+            storePassword "Camila@19"
             keyAlias "key"
-            keyPassword "Camila@19"       // Replace with your actual password (or use a secure method)
+            keyPassword "Camila@19"
         }
     }
 
     buildTypes {
         release {
-            signingConfig signingConfigs.release  // Use proper signing for release builds
-            minifyEnabled true
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-
-            // Specify the APK name
-            applicationVariants.all { variant ->
-                variant.outputs.all {
-                    if (variant.buildType.name == "release") {
-                        outputFileName = "mujbites.apk"
-                    }
-                }
-            }
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            shrinkResources false
         }
     }
 }
 
 dependencies {
-    // Add the desugaring library dependency. Use the latest version available.
+    implementation "androidx.multidex:multidex:2.0.1"
+    implementation "androidx.core:core-ktx:1.12.0"
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.3'
 }
 
