@@ -229,9 +229,15 @@ const login = async (req, res) => {
     
     console.log('Login attempt for:', mobileNumber);
     
-    const user = await User.findOne({ mobileNumber })
-      .select('+password')
-      .populate('restaurant');
+    const user = await Promise.race([
+      User.findOne({ mobileNumber })
+        .select('+password')
+        .populate('restaurant')
+        .maxTimeMS(8000),  // Set MongoDB operation timeout
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Database operation timed out')), 8000)
+      )
+    ]);
     
     console.log('Found user:', {
       id: user?._id,
@@ -257,7 +263,13 @@ const login = async (req, res) => {
     // Get restaurant data if user is a restaurant owner
     let restaurantData = null;
     if (user.role === 'restaurant') {
-      restaurantData = await Restaurant.findOne({ owner: user._id });
+      restaurantData = await Promise.race([
+        Restaurant.findOne({ owner: user._id }).maxTimeMS(8000),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Restaurant data fetch timed out')), 8000)
+        )
+      ]);
+      
       console.log('Found restaurant:', restaurantData?._id);
       
       if (restaurantData && !user.restaurant) {
@@ -295,14 +307,11 @@ const login = async (req, res) => {
       }
     };
 
-    console.log('Sending response:', {
-      role: response.user.role,
-      hasRestaurant: !!response.user.restaurant
-    });
+    console.log('Login successful for user:', user._id);
+    res.status(200).json(response);
 
-    res.json(response);
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('Login error:', error.message);
     res.status(500).json({
       success: false,
       message: 'Error during login',

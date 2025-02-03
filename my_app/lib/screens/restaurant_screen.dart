@@ -10,6 +10,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../widgets/cart.dart';
 import '../widgets/loading_screen.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
+import 'dart:ui';
 
 class RestaurantScreen extends StatefulWidget {
   final String restaurantId;
@@ -150,16 +151,71 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
     }
 
     return Scaffold(
-      // Add blur effect to app bar when scrolling
       extendBodyBehindAppBar: true,
       appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(0),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          color: Colors.black.withOpacity(_scrollOffset > 300 ? 0.5 : 0),
-          child: AppBar(backgroundColor: Colors.transparent),
+        preferredSize: const Size.fromHeight(120),
+        child: ClipRRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(
+              color: Colors.white.withOpacity(0.7),
+              child: SafeArea(
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.arrow_back_ios),
+                            onPressed: () => Navigator.pop(context),
+                          ),
+                          Expanded(
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 300),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[100],
+                                borderRadius: BorderRadius.circular(25),
+                              ),
+                              child: TextField(
+                                onChanged: (value) {
+                                  setState(() {
+                                    _searchQuery = value;
+                                  });
+                                },
+                                decoration: InputDecoration(
+                                  hintText: 'Search menu items...',
+                                  prefixIcon: const Icon(Icons.search),
+                                  border: InputBorder.none,
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          CartButton(
+                            onTap: () {
+                              showModalBottomSheet(
+                                context: context,
+                                isScrollControlled: true,
+                                backgroundColor: Colors.transparent,
+                                builder: (context) => CartWidget(
+                                  onClose: () => Navigator.pop(context),
+                                ),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
       ),
+      // Removed duplicate appBar and extendBodyBehindAppBar declarations
       floatingActionButton: AnimatedSlide(
         duration: const Duration(milliseconds: 300),
         offset: Offset(0, _scrollOffset > 100 ? 0 : 2),
@@ -182,8 +238,6 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
         controller: _scrollController,
         physics: const BouncingScrollPhysics(),
         slivers: [
-          // Hero Section
-          // Update the SliverAppBar and surrounding elements
           SliverAppBar(
             expandedHeight: 350,
             pinned: true,
@@ -208,7 +262,6 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
                       ),
                     ),
                   ),
-                  // Gradient overlay
                   Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -216,73 +269,13 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
                         end: Alignment.bottomCenter,
                         colors: [
                           Colors.transparent,
-                          Colors.black.withOpacity(0.3),
+                          Colors.black.withOpacity(0.5),
                           Colors.black.withOpacity(0.8),
                         ],
                       ),
                     ),
                   ),
-                  // Restaurant info
-                  Positioned(
-                    bottom: 20,
-                    left: 16,
-                    right: 16,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _restaurant?['name'] ?? '',
-                          style: GoogleFonts.playfairDisplay(
-                            fontSize: 36,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                            shadows: [
-                              Shadow(
-                                offset: const Offset(0, 2),
-                                blurRadius: 4,
-                                color: Colors.black.withOpacity(0.5),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Icon(Icons.location_on, color: Colors.white.withOpacity(0.9), size: 16),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                _restaurant?['address'] ?? '',
-                                style: GoogleFonts.montserrat(
-                                  fontSize: 14,
-                                  color: Colors.white.withOpacity(0.9),
-                                  shadows: [
-                                    Shadow(
-                                      offset: const Offset(0, 1),
-                                      blurRadius: 2,
-                                      color: Colors.black.withOpacity(0.5),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
                 ],
-              ),
-            ),
-            leading: Container(
-              margin: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.9),
-                shape: BoxShape.circle,
-              ),
-              child: IconButton(
-                icon: const Icon(Icons.arrow_back, color: Colors.black),
-                onPressed: () => Navigator.pop(context),
               ),
             ),
           ),
