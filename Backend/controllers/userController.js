@@ -229,16 +229,13 @@ const login = async (req, res) => {
     
     console.log('Login attempt for:', mobileNumber);
     
-    const user = await Promise.race([
-      User.findOne({ mobileNumber })
-        .select('+password')
-        .populate('restaurant')
-        .maxTimeMS(8000),  // Set MongoDB operation timeout
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Database operation timed out')), 8000)
-      )
-    ]);
+    const user = await User.findOne({ mobileNumber })
+      .select('+password')
+      .populate('restaurant')
+      .maxTimeMS(30000)  // Increased timeout to 30 seconds
+      .lean();
     
+    console.log('Database query completed for:', mobileNumber);
     console.log('Found user:', {
       id: user?._id,
       role: user?.role,
@@ -263,20 +260,11 @@ const login = async (req, res) => {
     // Get restaurant data if user is a restaurant owner
     let restaurantData = null;
     if (user.role === 'restaurant') {
-      restaurantData = await Promise.race([
-        Restaurant.findOne({ owner: user._id }).maxTimeMS(8000),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Restaurant data fetch timed out')), 8000)
-        )
-      ]);
+      restaurantData = await Restaurant.findOne({ owner: user._id })
+        .maxTimeMS(30000)  // Increased timeout to 30 seconds
+        .lean();
       
       console.log('Found restaurant:', restaurantData?._id);
-      
-      if (restaurantData && !user.restaurant) {
-        user.restaurant = restaurantData._id;
-        await user.save();
-        console.log('Updated user with restaurant:', user.restaurant);
-      }
     }
 
     const token = jwt.sign(
