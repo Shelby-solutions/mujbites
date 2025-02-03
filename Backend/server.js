@@ -8,7 +8,7 @@ const session = require('express-session');
 const MongoStore = require('connect-mongo');
 const auth = require('./middleware/authMiddleware');
 const Cart = require('./models/Cart');
-const { app } = require('./app');
+const { app, wss, notifyRestaurant, handleUpgrade } = require('./app');
 const http = require('http');
 const WebSocket = require('ws');
 const portfinder = require('portfinder');
@@ -29,19 +29,13 @@ const wss = new WebSocket.Server({ server });
 const clients = new Map();
 
 // Add WebSocket upgrade handling
+// Single upgrade handler
 server.on('upgrade', (request, socket, head) => {
-  try {
-    const pathname = new URL(request.url, `ws://${request.headers.host}`).pathname;
-    
-    if (pathname === '/ws') {
-      wss.handleUpgrade(request, socket, head, (ws) => {
-        wss.emit('connection', ws, request);
-      });
-    } else {
-      socket.destroy();
-    }
-  } catch (error) {
-    console.error('Error in upgrade handling:', error);
+  const pathname = new URL(request.url, `ws://${request.headers.host}`).pathname;
+  
+  if (pathname === '/ws') {
+    handleUpgrade(request, socket, head);
+  } else {
     socket.destroy();
   }
 });

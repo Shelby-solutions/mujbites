@@ -9,11 +9,39 @@ const app = express();
 // Define PORT before using it
 const PORT = process.env.PORT || 5000;
 
-// Create WebSocket server
-const wss = new WebSocket.Server({ noServer: true });
+// Create WebSocket server with proper error handling
+const wss = new WebSocket.Server({ 
+  noServer: true,
+  handleProtocols: (protocols, request) => {
+    return protocols[0];
+  }
+});
 
-// Store connected clients
-const clients = new Map();
+// Add connection tracking
+let upgradeInProgress = new Set();
+
+// Function to handle WebSocket upgrade
+function handleUpgrade(request, socket, head) {
+  const key = `${request.headers['sec-websocket-key']}`;
+  
+  if (upgradeInProgress.has(key)) {
+    console.log('Duplicate upgrade request detected, ignoring');
+    return;
+  }
+
+  upgradeInProgress.add(key);
+  
+  try {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request);
+    });
+  } catch (error) {
+    console.error('Error during WebSocket upgrade:', error);
+    socket.destroy();
+  } finally {
+    upgradeInProgress.delete(key);
+  }
+}
 
 // WebSocket connection handling
 wss.on('connection', (ws, request) => {
@@ -21,12 +49,24 @@ wss.on('connection', (ws, request) => {
     const url = new URL(request.url, `ws://${request.headers.host}`);
     const userId = url.searchParams.get('userId');
     const restaurantId = url.searchParams.get('restaurantId');
-    const type = url.searchParams.get('type');
+    const token = url.searchParams.get('token');
 
-    console.log('WebSocket connection attempt:', { userId, restaurantId, type });
+    console.log('WebSocket connection attempt:', { userId, restaurantId });
 
-    if (userId && restaurantId) {
+    if (userId && restaurantId && token) {
+      // Check if restaurant is already connected
+      const existingClient = clients.get(restaurantId);
+      if (existingClient) {
+        console.log(`Closing existing connection for restaurant ${restaurantId}`);
+        existingClient.close();
+        clients.delete(restaurantId);
+      }
+
+      // Setup new connection
+      ws.isAlive = true;
+      ws.on('pong', heartbeat);
       clients.set(restaurantId, ws);
+      
       console.log(`Restaurant ${restaurantId} connected to WebSocket`);
       
       ws.on('close', () => {
@@ -34,10 +74,25 @@ wss.on('connection', (ws, request) => {
         console.log(`Restaurant ${restaurantId} disconnected from WebSocket`);
       });
 
+      // Send connection confirmation
       ws.send(JSON.stringify({
         type: 'connectionConfirmed',
         message: 'Successfully connected to WebSocket server'
       }));
+
+      // Setup message handling
+      ws.on('message', (message) => {
+        try {
+          const data = JSON.parse(message);
+          console.log('Received message:', data);
+          
+          if (data.type === 'ping') {
+            ws.send(JSON.stringify({ type: 'pong' }));
+          }
+        } catch (error) {
+          console.error('Error processing message:', error);
+        }
+      });
     } else {
       console.log('Invalid connection attempt - missing parameters');
       ws.close();
@@ -46,6 +101,23 @@ wss.on('connection', (ws, request) => {
     console.error('Error in WebSocket connection:', error);
     ws.close();
   }
+});
+
+// Add ping interval to keep connections alive
+const interval = setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) {
+      console.log('Terminating inactive connection');
+      return ws.terminate();
+    }
+    
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 30000);
+
+wss.on('close', () => {
+  clearInterval(interval);
 });
 
 // Function to notify restaurants of new orders
@@ -105,4 +177,5 @@ app.use((err, req, res, next) => {
 });
 
 // Export app and WebSocket server
-module.exports = { app, wss, notifyRestaurant };
+// Export the handleUpgrade function along with other exports
+module.exports = { app, wss, notifyRestaurant, handleUpgrade };
