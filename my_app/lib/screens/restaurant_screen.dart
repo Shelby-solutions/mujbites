@@ -130,26 +130,32 @@ class _RestaurantScreenState extends State<RestaurantScreen> {
       body: CustomScrollView(
         slivers: [
           // Hero Section
+          // Update the SliverAppBar and surrounding elements
           SliverAppBar(
-            expandedHeight: 300,
+            expandedHeight: 350,
             pinned: true,
-            backgroundColor: AppTheme.primary,
+            stretch: true,
+            backgroundColor: Colors.transparent,
             flexibleSpace: FlexibleSpaceBar(
+              stretchModes: const [
+                StretchMode.zoomBackground,
+                StretchMode.blurBackground,
+              ],
               background: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Image.network(
-                    _restaurant?['imageUrl'] ?? '',
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      color: Colors.grey.shade200,
-                      child: Icon(
-                        Icons.restaurant,
-                        color: Colors.grey.shade400,
-                        size: 60,
+                  Hero(
+                    tag: 'restaurant-${widget.restaurantId}',
+                    child: Image.network(
+                      _restaurant?['imageUrl'] ?? '',
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        color: Colors.grey.shade200,
+                        child: Icon(Icons.restaurant, color: Colors.grey.shade400, size: 60),
                       ),
                     ),
                   ),
+                  // Gradient overlay
                   Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -157,13 +163,15 @@ class _RestaurantScreenState extends State<RestaurantScreen> {
                         end: Alignment.bottomCenter,
                         colors: [
                           Colors.transparent,
-                          Colors.black.withOpacity(0.7),
+                          Colors.black.withOpacity(0.3),
+                          Colors.black.withOpacity(0.8),
                         ],
                       ),
                     ),
                   ),
+                  // Restaurant info
                   Positioned(
-                    bottom: 16,
+                    bottom: 20,
                     left: 16,
                     right: 16,
                     child: Column(
@@ -172,18 +180,40 @@ class _RestaurantScreenState extends State<RestaurantScreen> {
                         Text(
                           _restaurant?['name'] ?? '',
                           style: GoogleFonts.playfairDisplay(
-                            fontSize: 32,
+                            fontSize: 36,
                             fontWeight: FontWeight.bold,
                             color: Colors.white,
+                            shadows: [
+                              Shadow(
+                                offset: const Offset(0, 2),
+                                blurRadius: 4,
+                                color: Colors.black.withOpacity(0.5),
+                              ),
+                            ],
                           ),
                         ),
                         const SizedBox(height: 8),
-                        Text(
-                          _restaurant?['address'] ?? '',
-                          style: GoogleFonts.montserrat(
-                            fontSize: 16,
-                            color: Colors.white.withOpacity(0.9),
-                          ),
+                        Row(
+                          children: [
+                            Icon(Icons.location_on, color: Colors.white.withOpacity(0.9), size: 16),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                _restaurant?['address'] ?? '',
+                                style: GoogleFonts.montserrat(
+                                  fontSize: 14,
+                                  color: Colors.white.withOpacity(0.9),
+                                  shadows: [
+                                    Shadow(
+                                      offset: const Offset(0, 1),
+                                      blurRadius: 2,
+                                      color: Colors.black.withOpacity(0.5),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -191,45 +221,53 @@ class _RestaurantScreenState extends State<RestaurantScreen> {
                 ],
               ),
             ),
+            leading: Container(
+              margin: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.9),
+                shape: BoxShape.circle,
+              ),
+              child: IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.black),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
           ),
-
-          // Search and Filters
+          
+          // Update the search and filter section
           SliverToBoxAdapter(
             child: Container(
               padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    offset: const Offset(0, -2),
+                    blurRadius: 10,
+                  ),
+                ],
+              ),
               child: Column(
                 children: [
                   // Search Bar
                   Container(
                     decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(30),
-                      border: Border.all(
-                        color: AppTheme.primary.withOpacity(0.2),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.05),
-                          blurRadius: 10,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     child: TextField(
                       onChanged: (value) => setState(() => _searchQuery = value),
                       decoration: InputDecoration(
                         hintText: 'Search menu items...',
-                        prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                        hintStyle: GoogleFonts.montserrat(color: Colors.grey.shade600),
+                        prefixIcon: Icon(Icons.search, color: Colors.grey.shade600),
                         border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 15,
-                        ),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
                       ),
                     ),
                   ),
                   const SizedBox(height: 16),
-
                   // Category Filters
                   SizedBox(
                     height: 40,
@@ -241,17 +279,23 @@ class _RestaurantScreenState extends State<RestaurantScreen> {
                         final isSelected = _selectedCategory == category;
                         return Padding(
                           padding: const EdgeInsets.only(right: 8),
-                          child: FilterChip(
-                            selected: isSelected,
-                            label: Text(category),
-                            onSelected: (_) => setState(() => _selectedCategory = category),
-                            backgroundColor: Colors.white,
-                            selectedColor: AppTheme.primary,
-                            labelStyle: GoogleFonts.montserrat(
-                              color: isSelected ? Colors.white : AppTheme.textSecondary,
-                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            child: FilterChip(
+                              selected: isSelected,
+                              label: Text(category),
+                              onSelected: (_) => setState(() => _selectedCategory = category),
+                              backgroundColor: Colors.white,
+                              selectedColor: AppTheme.primary,
+                              checkmarkColor: Colors.white,
+                              labelStyle: GoogleFonts.montserrat(
+                                color: isSelected ? Colors.white : AppTheme.textSecondary,
+                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              elevation: isSelected ? 4 : 0,
+                              pressElevation: 2,
                             ),
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
                           ),
                         );
                       },
@@ -261,9 +305,8 @@ class _RestaurantScreenState extends State<RestaurantScreen> {
               ),
             ),
           ),
-
-          // Menu Grid
-          // Update the SliverGrid configuration first
+          
+          // Update the menu grid styling
           SliverPadding(
             padding: const EdgeInsets.all(16),
             sliver: SliverGrid(
@@ -271,7 +314,7 @@ class _RestaurantScreenState extends State<RestaurantScreen> {
                 crossAxisCount: MediaQuery.of(context).size.width > 600 ? 3 : 2,
                 mainAxisSpacing: 16,
                 crossAxisSpacing: 16,
-                childAspectRatio: 0.8, // Adjusted for better content fit
+                childAspectRatio: 0.75,
               ),
               delegate: SliverChildBuilderDelegate(
                 (context, index) => _buildMenuItem(_filteredItems[index]),

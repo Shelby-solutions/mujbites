@@ -73,4 +73,6 @@ const notifyRestaurant = (restaurantId, orderData) => {
 
 // Make notifyRestaurant available globally
 global.notifyRestaurant = notifyRestaurant;
+
+// Export server and notifyRestaurant
 module.exports = { server, notifyRestaurant };
