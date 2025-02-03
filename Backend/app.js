@@ -1,9 +1,44 @@
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const WebSocket = require('ws');
 require('dotenv').config();
 
 const app = express();
+
+// Create WebSocket server
+const wss = new WebSocket.Server({ noServer: true });
+
+// Store connected clients
+const clients = new Map();
+
+wss.on('connection', (ws, request) => {
+  const { userId, restaurantId } = request.query;
+  
+  if (userId && restaurantId) {
+    clients.set(restaurantId, ws);
+    console.log(`Restaurant ${restaurantId} connected to WebSocket`);
+    
+    ws.on('close', () => {
+      clients.delete(restaurantId);
+      console.log(`Restaurant ${restaurantId} disconnected from WebSocket`);
+    });
+  }
+});
+
+// Add this function to notify restaurants of new orders
+function notifyRestaurant(restaurantId, orderData) {
+  const client = clients.get(restaurantId);
+  if (client && client.readyState === WebSocket.OPEN) {
+    client.send(JSON.stringify({
+      type: 'newOrder',
+      order: orderData
+    }));
+    console.log(`Notification sent to restaurant ${restaurantId}`);
+  } else {
+    console.log(`Restaurant ${restaurantId} not connected to WebSocket`);
+  }
+}
 
 // CORS configuration
 app.use(cors({
@@ -52,4 +87,5 @@ app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
 
-module.exports = app; 
+// Export the notify function
+module.exports = { app, notifyRestaurant };

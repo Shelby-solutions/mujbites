@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'dart:io' show Platform;  // Add this import
 import 'screens/login_screen.dart';
 import 'screens/signup_screen.dart';
 import 'screens/home_screen.dart';
@@ -9,17 +11,41 @@ import 'screens/restaurant_panel_screen.dart';
 import 'theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import 'providers/cart_provider.dart';
+import 'providers/auth_provider.dart';  // Add this import
 import 'package:shared_preferences/shared_preferences.dart';
 import 'widgets/custom_navbar.dart';
 import 'services/user_preferences.dart';
+import 'services/notification_service.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+
+// Add this global variable at the top level
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await UserPreferences.init();
+  
+  // Initialize notification service
+  final notificationService = NotificationService();
+  await notificationService.initialize();
+  
+  // Ensure notification permissions are requested
+  if (!kIsWeb && Platform.isIOS) {
+    await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin>()
+        ?.requestPermissions(
+          alert: true,
+          badge: true,
+          sound: true,
+          critical: true,
+        );
+  }
+  
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => CartProvider()),
+        ChangeNotifierProvider(create: (_) => AuthProvider()),
       ],
       child: const MyApp(),
     ),
@@ -63,7 +89,6 @@ class MyApp extends StatelessWidget {
         '/restaurant-panel': (context) => const RestaurantPanelScreen(),
       },
       onGenerateRoute: (settings) {
-        // Handle dynamic routes
         if (settings.name?.startsWith('/restaurant/') ?? false) {
           final restaurantId = settings.name!.split('/').last;
           return MaterialPageRoute(

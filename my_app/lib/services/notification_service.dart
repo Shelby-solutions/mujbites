@@ -9,6 +9,8 @@ import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
+import '../services/user_preferences.dart';
+import 'dart:math' as math;  // Add this import
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
@@ -23,39 +25,64 @@ class NotificationService {
   Future<void> initialize() async {
     if (_isInitialized) return;
 
-    // Request background permissions
-    await _requestBackgroundPermissions();
+    try {
+      // Request permissions first
+      await _requestBackgroundPermissions();  // Add this line
+      
+      if (Platform.isIOS) {
+        await _notifications
+            .resolvePlatformSpecificImplementation<
+                IOSFlutterLocalNotificationsPlugin>()
+            ?.requestPermissions(
+              alert: true,
+              badge: true,
+              sound: true,
+              critical: true,
+            );
+      }
 
-    await _notifications.initialize(
-      InitializationSettings(
-        android: const AndroidInitializationSettings('@mipmap/ic_launcher'),
-        iOS: DarwinInitializationSettings(
-          requestAlertPermission: true,
-          requestBadgePermission: true,
-          requestSoundPermission: true,
-          requestCriticalPermission: true, // For critical notifications
-          notificationCategories: [
-            DarwinNotificationCategory(
-              'order_category',
-              actions: [
-                DarwinNotificationAction.plain('accept', 'Accept'),
-                DarwinNotificationAction.plain('reject', 'Reject'),
-              ],
-              options: {
-                DarwinNotificationCategoryOption.hiddenPreviewShowTitle,
-                DarwinNotificationCategoryOption.allowAnnouncement,
-              },
-            ),
-          ],
+      // Initialize notifications
+      await _notifications.initialize(
+        InitializationSettings(
+          android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+          iOS: DarwinInitializationSettings(
+            requestAlertPermission: true,
+            requestBadgePermission: true,
+            requestSoundPermission: true,
+          ),
         ),
-      ),
-      onDidReceiveNotificationResponse: _handleNotificationResponse,
-      onDidReceiveBackgroundNotificationResponse: _handleBackgroundNotificationResponse,
-    );
+        onDidReceiveNotificationResponse: _handleNotificationResponse,
+        onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
+      );
 
-    // Set up background message handling
-    _setupBackgroundHandler();
-    _isInitialized = true;
+      // Connect to WebSocket for real-time notifications
+      await connectToWebSocket();
+      
+      _isInitialized = true;
+    } catch (e) {
+      print('Error initializing notification service: $e');
+    }
+  }
+
+  void _handleNotificationResponse(NotificationResponse details) {
+    print('Handling notification response: ${details.payload}');
+    if (details.payload != null) {
+      try {
+        final data = jsonDecode(details.payload!);
+        if (data['orderData'] != null) {
+          onNewOrder?.call(data['orderData']);
+        }
+      } catch (e) {
+        print('Error processing notification payload: $e');
+      }
+    }
+  }
+
+  // Add this at the top level of the file, outside the class
+  @pragma('vm:entry-point')
+  void notificationTapBackground(NotificationResponse details) {
+    print('Handling background notification tap: ${details.payload}');
+    // Handle background notification tap
   }
 
   Future<void> _requestBackgroundPermissions() async {
@@ -66,6 +93,7 @@ class NotificationService {
     }
   }
 
+  // Update in _setupBackgroundHandler
   void _setupBackgroundHandler() {
     _channel?.stream.listen(
       (message) async {
@@ -80,15 +108,16 @@ class NotificationService {
       },
       onError: (error) {
         print('WebSocket error: $error');
-        _reconnect();
+        connectToWebSocket();  // Changed to use existing method
       },
       onDone: () {
         print('WebSocket connection closed');
-        _reconnect();
+        connectToWebSocket();  // Changed to use existing method
       },
     );
   }
 
+  // Remove this duplicate implementation
   void _handleNewOrder(Map<String, dynamic> orderData) async {
     await showOrderNotification(
       'New Order Received!',
@@ -111,89 +140,189 @@ class NotificationService {
       priority: Priority.high,
       enableVibration: true,
       playSound: true,
-      sound: RawResourceAndroidNotificationSound('notification_sound'),
-      category: AndroidNotificationCategory.alarm,
-      fullScreenIntent: true,
-      visibility: NotificationVisibility.public,
-      actions: [
-        AndroidNotificationAction('accept', 'Accept'),
-        AndroidNotificationAction('reject', 'Reject'),
-      ],
     );
 
-    final iosDetails = DarwinNotificationDetails(
+    final iOSDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
-      sound: 'notification_sound.aiff',
-      categoryIdentifier: 'order_category',
-      interruptionLevel: InterruptionLevel.timeSensitive,
+      sound: 'default',
+      interruptionLevel: InterruptionLevel.active,
     );
 
     final details = NotificationDetails(
       android: androidDetails,
-      iOS: iosDetails,
+      iOS: iOSDetails,
     );
 
-    await _notifications.show(
-      DateTime.now().millisecond,
-      title,
-      body,
-      details,
-      payload: payload != null ? jsonEncode(payload) : null,
-    );
+    try {
+      await _notifications.show(  // Changed from flutterLocalNotificationsPlugin to _notifications
+        DateTime.now().millisecond,
+        title,
+        body,
+        details,
+        payload: jsonEncode(payload),
+      );
+    } catch (e) {
+      print('Error showing notification: $e');
+    }
   }
 
+  // Add connection state management
+  bool _isConnecting = false;
+  bool _shouldReconnect = true;
+  Timer? _reconnectTimer;
+  int _reconnectAttempts = 0;
+  static const int maxReconnectAttempts = 5;
+
   String get _wsUrl {
-    if (kIsWeb) {
-      return 'ws://localhost:5000/ws';
-    }
-    return Platform.isAndroid 
-        ? 'ws://10.0.2.2:5000/ws'  // Android emulator
-        : 'ws://localhost:5000/ws'; // iOS simulator or web
+    const baseUrl = 'mujbites-app.onrender.com';
+    return 'wss://$baseUrl/api/ws';  // Updated path to match server
   }
 
   Future<void> connectToWebSocket() async {
+    if (_isConnecting || _reconnectAttempts >= maxReconnectAttempts) {
+      print('Skipping connection attempt');
+      return;
+    }
+    
     try {
-      _channel = WebSocketChannel.connect(Uri.parse(_wsUrl));
+      _isConnecting = true;
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token')?.replaceAll('Bearer ', '');
+      final userId = prefs.getString('userId');
+      final restaurantId = prefs.getString('restaurantId');
       
-      _channel!.stream.listen(
+      print('WebSocket Connection Attempt:');
+      print('Token: $token');
+      print('UserId: $userId');
+      print('RestaurantId: $restaurantId');
+      
+      if (token == null || userId == null || restaurantId == null) {
+        print('Missing credentials for WebSocket connection');
+        return;
+      }
+
+      final wsUrl = Uri.parse(_wsUrl).replace(
+        queryParameters: {
+          'token': token,
+          'userId': userId,
+          'restaurantId': restaurantId,
+        },
+      );
+      
+      print('Attempting WebSocket connection to: $wsUrl');
+      
+      await _channel?.sink.close();
+      _channel = WebSocketChannel.connect(wsUrl);
+      
+      // Add connection timeout
+      bool connected = false;
+      Timer(const Duration(seconds: 10), () {
+        if (!connected) {
+          print('WebSocket connection timeout');
+          _handleConnectionError();
+        }
+      });
+
+      _channel?.stream.listen(
         (message) {
-          final data = jsonDecode(message);
-          if (data['type'] == 'newOrder') {
-            _handleNewOrder(data['order']);
+          print('WebSocket message received: $message');
+          try {
+            final data = jsonDecode(message);
+            if (data['type'] == 'newOrder') {
+              print('Processing new order notification');
+              _processNewOrder(data['order']);
+            }
+          } catch (e) {
+            print('Error processing WebSocket message: $e');
           }
         },
         onError: (error) {
           print('WebSocket error: $error');
-          _reconnect();
+          _handleConnectionError();
         },
         onDone: () {
           print('WebSocket connection closed');
-          _reconnect();
+          _handleConnectionError();
         },
+        cancelOnError: false,
       );
+
+      connected = true;
+      _reconnectAttempts = 0;
+      print('WebSocket connection established');
+      
     } catch (e) {
       print('WebSocket connection error: $e');
-      _reconnect();
+      _handleConnectionError();
+    } finally {
+      _isConnecting = false;
     }
   }
 
-  static void _handleBackgroundNotificationResponse(NotificationResponse details) {
-    print('Handling background notification: ${details.payload}');
-    // Handle the background notification
+  // Update the _processNewOrder method
+  Future<void> _processNewOrder(Map<String, dynamic> orderData) async {
+    try {
+      print('Processing new order notification: ${orderData['_id']}');
+      final orderId = orderData['_id']?.toString() ?? '';
+      final amount = orderData['totalAmount']?.toString() ?? '0';
+      
+      // Show notification immediately
+      await _notifications.show(
+        DateTime.now().millisecond,
+        'New Order Received!',
+        'Order #${orderId.substring(math.max(0, orderId.length - 6))} - ₹$amount',
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            'restaurant_orders',
+            'Restaurant Orders',
+            channelDescription: 'Notifications for new restaurant orders',
+            importance: Importance.max,
+            priority: Priority.high,
+            playSound: true,
+            enableVibration: true,
+            category: AndroidNotificationCategory.message,
+            fullScreenIntent: true,
+          ),
+          iOS: DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+            sound: 'notification_sound.aiff',
+            interruptionLevel: InterruptionLevel.timeSensitive,
+          ),
+        ),
+        payload: jsonEncode(orderData),
+      );
+      
+      print('Notification shown for order: ${orderId}');
+      onNewOrder?.call(orderData);
+    } catch (e) {
+      print('Error showing notification: $e');
+    }
   }
 
-  void _handleNotificationResponse(NotificationResponse details) async {
-    print('Handling foreground notification: ${details.payload}');
-    if (details.payload != null) {
-      try {
-        final data = jsonDecode(details.payload!);
-        onNewOrder?.call(data);
-      } catch (e) {
-        print('Error parsing notification payload: $e');
-      }
+  void _handleConnectionError() {
+    if (!_shouldReconnect || _isConnecting) return;
+    
+    _reconnectAttempts++;
+    if (_reconnectAttempts < maxReconnectAttempts) {
+      final delay = Duration(seconds: math.min(30, math.pow(2, _reconnectAttempts).toInt()));
+      print('Scheduling reconnect attempt ${_reconnectAttempts} in ${delay.inSeconds} seconds');
+      _reconnectTimer?.cancel();
+      _reconnectTimer = Timer(delay, () => connectToWebSocket());
+    } else {
+      print('Max reconnection attempts reached');
+      _shouldReconnect = false;
     }
+  }
+
+  // Add dispose method
+  void dispose() {
+    _shouldReconnect = false;
+    _reconnectTimer?.cancel();
+    _channel?.sink.close();
   }
 
   Future<void> _showNotification(String title, String body, {Map<String, dynamic>? payload}) async {
@@ -234,15 +363,13 @@ class NotificationService {
     );
   }
 
-  Future<void> _reconnect() async {
-    await Future.delayed(const Duration(seconds: 5));
-    connectToWebSocket();
-  }
+  // Remove this duplicate _reconnect method
+  // Future<void> _reconnect() async {
+  //   await Future.delayed(const Duration(seconds: 5));
+  //   connectToWebSocket();
+  // }
 
-  void dispose() {
-    _channel?.sink.close();
-  }
-
+  // Remove the second dispose method that only has _channel?.sink.close()
   // Add method to check notification permission status
   Future<bool> checkNotificationPermissions() async {
     if (kIsWeb) return true;
