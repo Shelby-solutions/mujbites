@@ -30,9 +30,21 @@ app.use(cors({
       'http://localhost:5173',
       'capacitor://localhost',
       'ionic://localhost',
-      'http://localhost:49421'
+      'http://localhost:49421',
+      'http://localhost:*',
+      'https://localhost:*',
+      'https://mujbites-app.vercel.app',
+      'https://mujbites-app-*',
+      'https://*.mujbites-app.com',
+      'https://*.onrender.com'
     ];
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+    if (!origin || allowedOrigins.some(allowed => {
+      if (allowed.includes('*')) {
+        const pattern = new RegExp('^' + allowed.replace(/\*/g, '.*') + '$');
+        return pattern.test(origin);
+      }
+      return allowed === origin;
+    })) {
       callback(null, true);
     } else {
       console.log('Blocked origin:', origin);
@@ -42,8 +54,9 @@ app.use(cors({
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
-  exposedHeaders: ['Content-Length', 'X-Requested-With'],
-  maxAge: 86400
+  exposedHeaders: ['Content-Length'],
+  maxAge: 86400,
+  preflightContinue: false
 }));
 
 // Add security headers
