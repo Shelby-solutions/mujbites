@@ -8,8 +8,26 @@ const app = express();
 // CORS configuration
 app.use(cors({
   origin: [
-    'https://mujbites-app.onrender.com',
-    'http://localhost:3000'
+    'http://localhost:3000',
+      'http://localhost',
+      'http://10.0.2.2:5000',
+      'http://localhost:5000',
+      'http://127.0.0.1:5000',
+      'ws://localhost:5000',
+      'https://mujbites-app.onrender.com',
+      'wss://mujbites-app.onrender.com',
+      'https://mujbites-app.netlify.app',
+      'http://localhost:3001',
+      'http://localhost:5173',
+      'capacitor://localhost',
+      'ionic://localhost',
+      'http://localhost:49421',
+      'http://localhost:*',
+      'https://localhost:*',
+      'https://mujbites-app.vercel.app',
+      'https://mujbites-app-*',
+      'https://*.mujbites-app.com',
+      'https://*.onrender.com'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization'],
