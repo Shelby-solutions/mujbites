@@ -17,38 +17,123 @@ class NotificationService {
   factory NotificationService() => _instance;
   NotificationService._internal();
 
+  static const int maxRetries = 3;
+  static const Duration retryDelay = Duration(seconds: 2);
+  
   WebSocketChannel? _channel;
   final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
   Function(Map<String, dynamic>)? onNewOrder;
   bool _isInitialized = false;
   FirebaseMessaging? _firebaseMessaging;
 
+  // Add error tracking
+  final List<String> _failedNotifications = [];
+  Timer? _retryTimer;
+
   Future<void> initialize() async {
     if (_isInitialized) return;
 
-    await Firebase.initializeApp();
-    _firebaseMessaging = FirebaseMessaging.instance;
+    try {
+      // Initialize local notifications first
+      await _initializeLocalNotifications();
 
-    // Request permissions with proper handling for both platforms
-    await _requestNotificationPermissions();
-    await _configureNotificationChannels();
+      // Configure notification channels for Android
+      if (Platform.isAndroid) {
+        await _configureNotificationChannels();
+      }
 
-    // Get FCM token and print it for debugging
-    final token = await _firebaseMessaging?.getToken();
-    print('FCM Token: $token');
+      // Initialize Firebase with error handling
+      await _initializeFirebase();
 
-    // Configure message handling
-    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-    FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
-    FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationTap);
+      // Request permissions with proper handling for both platforms
+      await _requestNotificationPermissions();
 
-    // Handle initial message when app is launched from terminated state
-    final initialMessage = await FirebaseMessaging.instance.getInitialMessage();
-    if (initialMessage != null) {
-      _handleNotificationTap(initialMessage);
+      _isInitialized = true;
+    } catch (e) {
+      print('Error initializing notification service: $e');
+      // Set initialized to false so we can retry
+      _isInitialized = false;
+      // Don't rethrow, allow app to continue without notifications
     }
+  }
 
-    _isInitialized = true;
+  Future<void> _initializeLocalNotifications() async {
+    try {
+      const initializationSettingsAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const initializationSettingsIOS = DarwinInitializationSettings(
+        requestAlertPermission: false,
+        requestBadgePermission: false,
+        requestSoundPermission: false,
+      );
+      const initializationSettings = InitializationSettings(
+        android: initializationSettingsAndroid,
+        iOS: initializationSettingsIOS,
+      );
+      await _notifications.initialize(
+        initializationSettings,
+        onDidReceiveNotificationResponse: _handleNotificationResponse,
+        onDidReceiveBackgroundNotificationResponse: _handleBackgroundNotificationResponse,
+      );
+    } catch (e) {
+      print('Error initializing local notifications: $e');
+      // Continue without local notifications
+    }
+  }
+
+  Future<void> _initializeFirebase() async {
+    try {
+      // Check if Firebase is already initialized
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp();
+      }
+      _firebaseMessaging = FirebaseMessaging.instance;
+
+      if (_firebaseMessaging != null) {
+        // Configure foreground notification presentation options
+        await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+
+        // Get FCM token and print it for debugging
+        try {
+          final token = await _firebaseMessaging?.getToken();
+          print('FCM Token: $token');
+        } catch (e) {
+          print('Error getting FCM token: $e');
+        }
+
+        // Configure message handling with error handling
+        FirebaseMessaging.onMessage.listen(
+          _handleForegroundMessage,
+          onError: (error) {
+            print('Error handling foreground message: $error');
+            _scheduleRetry();
+          },
+        );
+
+        FirebaseMessaging.onMessageOpenedApp.listen(
+          _handleNotificationTap,
+          onError: (error) {
+            print('Error handling notification tap: $error');
+          },
+        );
+
+        // Handle initial message when app is launched from terminated state
+        try {
+          final initialMessage = await FirebaseMessaging.instance.getInitialMessage();
+          if (initialMessage != null) {
+            _handleNotificationTap(initialMessage);
+          }
+        } catch (e) {
+          print('Error handling initial message: $e');
+        }
+      }
+    } catch (e) {
+      print('Error initializing Firebase: $e');
+      // Continue without Firebase
+    }
   }
 
   Future<void> _requestNotificationPermissions() async {
@@ -84,7 +169,7 @@ class NotificationService {
   }
 
   Future<void> _configureNotificationChannels() async {
-    if (Platform.isAndroid) {
+    try {
       const androidChannel = AndroidNotificationChannel(
         'restaurant_orders',
         'Restaurant Orders',
@@ -96,30 +181,10 @@ class NotificationService {
       );
 
       await _notifications
-          .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>()
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
           ?.createNotificationChannel(androidChannel);
-    } else if (Platform.isIOS) {
-      // Configure iOS notification categories
-      final DarwinNotificationDetails iOSPlatformChannelSpecifics = DarwinNotificationDetails(
-        presentAlert: true,
-        presentBadge: true,
-        presentSound: true,
-        sound: 'default',
-        badgeNumber: 1,
-        categoryIdentifier: 'restaurant_orders',
-        threadIdentifier: 'restaurant_orders',
-      );
-      
-      // Register the iOS category
-      await _notifications
-          .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
-          ?.requestPermissions(
-            alert: true,
-            badge: true,
-            sound: true,
-            critical: true,
-          );
+    } catch (e) {
+      print('Error configuring notification channels: $e');
     }
   }
 
@@ -137,29 +202,145 @@ class NotificationService {
     return await _firebaseMessaging?.getToken();
   }
 
-  void _handleForegroundMessage(RemoteMessage message) {
+  Future<void> _showNotification(String title, String body, {Map<String, dynamic>? payload}) async {
+    int retryCount = 0;
+    while (retryCount < maxRetries) {
+      try {
+        final androidDetails = AndroidNotificationDetails(
+          'restaurant_orders',
+          'Restaurant Orders',
+          channelDescription: 'Notifications for new restaurant orders',
+          importance: Importance.max,
+          priority: Priority.high,
+          enableVibration: true,
+          playSound: true,
+          sound: const RawResourceAndroidNotificationSound('notification_sound'),
+          category: AndroidNotificationCategory.message,
+          visibility: NotificationVisibility.public,
+        );
+
+        final iOSDetails = DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+          sound: 'default',
+          badgeNumber: 1,
+          categoryIdentifier: 'restaurant_orders',
+          threadIdentifier: 'restaurant_orders',
+        );
+
+        final details = NotificationDetails(
+          android: androidDetails,
+          iOS: iOSDetails,
+        );
+
+        final notificationId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+        
+        await _notifications.show(
+          notificationId,
+          title,
+          body,
+          details,
+          payload: payload != null ? jsonEncode(payload) : null,
+        );
+
+        print('Notification shown successfully: $title');
+        return;
+      } catch (e) {
+        print('Error showing notification (attempt ${retryCount + 1}): $e');
+        retryCount++;
+        if (retryCount < maxRetries) {
+          await Future.delayed(retryDelay * retryCount);
+        } else {
+          _failedNotifications.add('$title - $body');
+          _scheduleRetry();
+          rethrow;
+        }
+      }
+    }
+  }
+
+  void _scheduleRetry() {
+    _retryTimer?.cancel();
+    _retryTimer = Timer(const Duration(minutes: 5), _retryFailedNotifications);
+  }
+
+  Future<void> _retryFailedNotifications() async {
+    if (_failedNotifications.isEmpty) return;
+
+    final notifications = List<String>.from(_failedNotifications);
+    _failedNotifications.clear();
+
+    for (final notification in notifications) {
+      try {
+        final parts = notification.split(' - ');
+        await _showNotification(parts[0], parts[1]);
+      } catch (e) {
+        print('Error retrying notification: $e');
+        _failedNotifications.add(notification);
+      }
+    }
+  }
+
+  Future<bool> validateNotificationPayload(Map<String, dynamic> payload) async {
+    try {
+      final requiredFields = ['type', 'orderId', 'restaurantId'];
+      final missingFields = requiredFields.where((field) => !payload.containsKey(field));
+      
+      if (missingFields.isNotEmpty) {
+        print('Missing required fields in payload: $missingFields');
+        return false;
+      }
+
+      // Validate restaurantId format
+      final restaurantId = payload['restaurantId'];
+      if (restaurantId == null || restaurantId.toString().isEmpty) {
+        print('Invalid restaurantId in payload');
+        return false;
+      }
+
+      return true;
+    } catch (e) {
+      print('Error validating notification payload: $e');
+      return false;
+    }
+  }
+
+  void _handleForegroundMessage(RemoteMessage message) async {
     print('Received foreground message: ${message.data}');
     
-    final type = message.data['type'];
-    switch(type) {
-      case 'new_order':
-        _showNotification(
-          message.notification?.title ?? 'New Order',
-          message.notification?.body ?? 'You have received a new order',
-          payload: message.data
-        );
-        break;
-      case 'order_status_update':
-        _showNotification(
-          message.notification?.title ?? 'Order Update',
-          message.notification?.body ?? 'Your order status has been updated',
-          payload: message.data
-        );
-        break;
+    if (!await validateNotificationPayload(message.data)) {
+      print('Invalid notification payload received');
+      return;
     }
-    
-    // Call the callback if set
-    onNewOrder?.call(message.data);
+
+    final type = message.data['type'];
+    try {
+      switch(type) {
+        case 'new_order':
+          await _showNotification(
+            message.notification?.title ?? 'New Order',
+            message.notification?.body ?? 'You have received a new order',
+            payload: message.data
+          );
+          break;
+        case 'order_status_update':
+          await _showNotification(
+            message.notification?.title ?? 'Order Update',
+            message.notification?.body ?? 'Your order status has been updated',
+            payload: message.data
+          );
+          break;
+        default:
+          print('Unknown notification type: $type');
+          break;
+      }
+      
+      onNewOrder?.call(message.data);
+    } catch (e) {
+      print('Error handling foreground message: $e');
+      _scheduleRetry();
+    }
   }
 
   void _handleNotificationTap(RemoteMessage message) {
@@ -238,61 +419,13 @@ class NotificationService {
     }
   }
 
-  Future<void> _showNotification(String title, String body, {Map<String, dynamic>? payload}) async {
-    try {
-      final androidDetails = AndroidNotificationDetails(
-        'restaurant_orders',
-        'Restaurant Orders',
-        channelDescription: 'Notifications for new restaurant orders',
-        importance: Importance.max,
-        priority: Priority.high,
-        enableVibration: true,
-        playSound: true,
-        sound: const RawResourceAndroidNotificationSound('notification_sound'),
-        category: AndroidNotificationCategory.message,
-        fullScreenIntent: true,
-        visibility: NotificationVisibility.public,
-      );
-
-      final iOSDetails = DarwinNotificationDetails(
-        presentAlert: true,
-        presentBadge: true,
-        presentSound: true,
-        sound: 'default',
-        badgeNumber: 1,
-        categoryIdentifier: 'restaurant_orders',
-        threadIdentifier: 'restaurant_orders',
-        interruptionLevel: InterruptionLevel.timeSensitive,
-      );
-
-      final details = NotificationDetails(
-        android: androidDetails,
-        iOS: iOSDetails,
-      );
-
-      // Generate unique notification ID
-      final id = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-
-      await _notifications.show(
-        id,
-        title,
-        body,
-        details,
-        payload: payload != null ? jsonEncode(payload) : null,
-      );
-
-      print('Notification shown successfully: $title');
-    } catch (e) {
-      print('Error showing notification: $e');
-    }
-  }
-
   Future<void> _reconnect() async {
     await Future.delayed(const Duration(seconds: 5));
     connectToWebSocket();
   }
 
   void dispose() {
+    _retryTimer?.cancel();
     _channel?.sink.close();
   }
 
@@ -386,18 +519,117 @@ class NotificationService {
   }
 }
 
-// Add this top-level function for background message handling
+// Update the background message handler at the bottom of the file
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
-  print('Handling background message: ${message.data}');
-  
-  // Show notification even when app is in background
-  final notificationService = NotificationService();
-  await notificationService.initialize();
-  notificationService._showNotification(
-    message.notification?.title ?? 'New Order',
-    message.notification?.body ?? 'You have received a new order',
-      payload: message.data
-  );
+  try {
+    // Ensure Firebase is initialized
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp();
+    }
+    print('Handling background message: ${message.data}');
+
+    // Create notification channel for Android
+    if (Platform.isAndroid) {
+      const androidChannel = AndroidNotificationChannel(
+        'restaurant_orders',
+        'Restaurant Orders',
+        description: 'Notifications for new restaurant orders',
+        importance: Importance.max,
+        playSound: true,
+        enableVibration: true,
+        showBadge: true,
+      );
+
+      final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+      await flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(androidChannel);
+    }
+
+    // Initialize the notification plugin with platform-specific settings
+    final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+    await flutterLocalNotificationsPlugin.initialize(
+      const InitializationSettings(
+        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        iOS: DarwinInitializationSettings(
+          requestAlertPermission: false,
+          requestBadgePermission: false,
+          requestSoundPermission: false,
+        ),
+      ),
+    );
+
+    // Show the notification
+    await _showBackgroundNotification(flutterLocalNotificationsPlugin, message);
+  } catch (e) {
+    print('Error in background message handler: $e');
+  }
+}
+
+Future<void> _showBackgroundNotification(
+  FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin,
+  RemoteMessage message,
+) async {
+  try {
+    final androidDetails = AndroidNotificationDetails(
+      'restaurant_orders',
+      'Restaurant Orders',
+      channelDescription: 'Notifications for new restaurant orders',
+      importance: Importance.max,
+      priority: Priority.high,
+      enableVibration: true,
+      playSound: true,
+      sound: const RawResourceAndroidNotificationSound('notification_sound'),
+      category: AndroidNotificationCategory.message,
+      visibility: NotificationVisibility.public,
+      fullScreenIntent: true,
+    );
+
+    final iOSDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+      sound: 'default',
+      badgeNumber: 1,
+      categoryIdentifier: 'restaurant_orders',
+      threadIdentifier: 'restaurant_orders',
+      interruptionLevel: InterruptionLevel.timeSensitive,
+    );
+
+    final details = NotificationDetails(
+      android: androidDetails,
+      iOS: iOSDetails,
+    );
+
+    final notificationId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    String title;
+    String body;
+
+    switch (message.data['type']) {
+      case 'new_order':
+        title = message.notification?.title ?? 'New Order';
+        body = message.notification?.body ?? 'You have received a new order';
+        break;
+      case 'order_status_update':
+        title = message.notification?.title ?? 'Order Update';
+        body = message.notification?.body ?? 'Your order status has been updated';
+        break;
+      default:
+        title = message.notification?.title ?? 'New Notification';
+        body = message.notification?.body ?? 'You have a new notification';
+    }
+
+    await flutterLocalNotificationsPlugin.show(
+      notificationId,
+      title,
+      body,
+      details,
+      payload: message.data != null ? jsonEncode(message.data) : null,
+    );
+
+    print('Background notification shown successfully');
+  } catch (e) {
+    print('Error showing background notification: $e');
+  }
 } 

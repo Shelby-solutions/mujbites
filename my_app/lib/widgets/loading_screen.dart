@@ -178,6 +178,7 @@ class _BouncingDot extends StatefulWidget {
 class _BouncingDotState extends State<_BouncingDot> with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _animation;
+  bool _disposed = false;
 
   @override
   void initState() {
@@ -190,16 +191,24 @@ class _BouncingDotState extends State<_BouncingDot> with SingleTickerProviderSta
     _animation = Tween<double>(begin: 0, end: -10).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
     )..addListener(() {
-      setState(() {});
+      if (!_disposed) {
+        setState(() {});
+      }
     });
 
     Future.delayed(widget.delay, () {
-      _controller.repeat(reverse: true);
+      if (!_disposed && mounted) {
+        _controller.repeat(reverse: true);
+      }
     });
   }
 
   @override
   void dispose() {
+    _disposed = true;
+    if (_controller.isAnimating) {
+      _controller.stop();
+    }
     _controller.dispose();
     super.dispose();
   }

@@ -1,54 +1,74 @@
-plugins {
-    id "com.android.application"
-    // START: FlutterFire Configuration
-    id 'com.google.gms.google-services'
-    // END: FlutterFire Configuration version "8.2.1"
-    id "kotlin-android"
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
-    id "dev.flutter.flutter-gradle-plugin"
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { reader ->
+        localProperties.load(reader)
+    }
 }
 
+def flutterRoot = localProperties.getProperty('flutter.sdk')
+if (flutterRoot == null) {
+    throw new GradleException("Flutter SDK not found. Define location with flutter.sdk in the local.properties file.")
+}
+
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+if (flutterVersionCode == null) {
+    flutterVersionCode = '1'
+}
+
+def flutterVersionName = localProperties.getProperty('flutter.versionName')
+if (flutterVersionName == null) {
+    flutterVersionName = '1.0'
+}
+
+apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
+apply plugin: 'com.google.gms.google-services'
+
 android {
-    namespace = "com.mujbites.mujbites"
-    compileSdk = 34  // Fixed value (Flutter default is 34)
-    ndkVersion = "25.1.8937393"  // Correct NDK version as required
+    namespace "com.mujbites.mujbites"
+    compileSdkVersion flutter.compileSdkVersion
+    ndkVersion flutter.ndkVersion
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-        // Enable core library desugaring for Java 8+ language features
         coreLibraryDesugaringEnabled true
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
 
     kotlinOptions {
-        jvmTarget = '17'
+        jvmTarget = '1.8'
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
     }
 
     defaultConfig {
-        applicationId = "com.mujbites.mujbites"
-        minSdk = 21  // Ensure minSdk is defined correctly
-        targetSdk = 34  // Ensure targetSdk is set correctly
-        versionCode = 1
-        versionName = "1.0.0"
+        applicationId "com.mujbites.mujbites"
+        minSdkVersion 21
+        targetSdkVersion flutter.targetSdkVersion
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+        multiDexEnabled true
     }
 
-    // Place signingConfigs before buildTypes
     signingConfigs {
         release {
-            storeFile file("./key.jks")  // Path to your keystore file (inside android/app/)
-            storePassword "Camila@19"     // Replace with your actual password (or use a secure method)
+            storeFile file("./key.jks")
+            storePassword "Camila@19"
             keyAlias "key"
-            keyPassword "Camila@19"       // Replace with your actual password (or use a secure method)
+            keyPassword "Camila@19"
         }
     }
 
     buildTypes {
         release {
-            signingConfig signingConfigs.release  // Use proper signing for release builds
+            signingConfig signingConfigs.release
             minifyEnabled true
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
 
-            // Specify the APK name
             applicationVariants.all { variant ->
                 variant.outputs.all {
                     if (variant.buildType.name == "release") {
@@ -57,14 +77,23 @@ android {
                 }
             }
         }
+        debug {
+            // Use default debug signing config
+        }
     }
 }
 
-dependencies {
-    // Add the desugaring library dependency. Use the latest version available.
-    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.3'
+flutter {
+    source '../..'
 }
 
-flutter {
-    source = "../.."
+dependencies {
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:1.1.5'
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
+    implementation platform('com.google.firebase:firebase-bom:32.7.1')
+    implementation 'com.google.firebase:firebase-analytics'
+    implementation 'com.google.firebase:firebase-messaging'
+    implementation 'androidx.window:window:1.0.0'
+    implementation 'androidx.window:window-java:1.0.0'
+    implementation 'com.android.support:multidex:1.0.3'
 }

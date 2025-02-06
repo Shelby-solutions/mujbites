@@ -15,6 +15,8 @@ import 'widgets/custom_navbar.dart';
 import 'services/user_preferences.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';  // This was auto-generated
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,6 +30,12 @@ void main() async {
   );
   
   await UserPreferences.init();
+  
+  // Initialize sqflite database
+  final databasesPath = await getDatabasesPath();
+  final path = join(databasesPath, 'cache.db');
+  await openDatabase(path, version: 1);
+  
   runApp(
     MultiProvider(
       providers: [

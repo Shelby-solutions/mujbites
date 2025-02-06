@@ -8,19 +8,30 @@ import 'package:my_app/services/user_preferences.dart';
 import 'package:dio/dio.dart';  // Add this import at the top
 
 class ApiService {
-  static const bool useProductionUrl = true; // Changed to true to use production URL
+  static const bool useProductionUrl = false;
 
-  final Dio _dio = Dio(BaseOptions(baseUrl: baseUrl));
+  // Change from getter to static const
+  static const String productionUrl = 'https://mujbites-app.onrender.com/api';
+  static const String devWebUrl = 'http://localhost:5000/api';
+  static const String devAndroidUrl = 'http://10.0.2.2:5000/api';
+  static const String devIosUrl = 'http://localhost:5000/api';
 
+  final Dio _dio = Dio(BaseOptions(
+    baseUrl: useProductionUrl ? productionUrl : _getDevUrl(),
+    connectTimeout: const Duration(seconds: 30),
+    receiveTimeout: const Duration(seconds: 30),
+  ));
+
+  // Helper method to get development URL
+  static String _getDevUrl() {
+    if (kIsWeb) return devWebUrl;
+    if (Platform.isAndroid) return devAndroidUrl;
+    return devIosUrl;
+  }
+
+  // Use this for getting the base URL
   static String get baseUrl {
-    const productionUrl = 'https://mujbites-app.onrender.com/api';
-    const devUrl = kIsWeb 
-        ? 'http://localhost:5000/api'
-        : Platform.isAndroid 
-            ? 'http://10.0.2.2:5000/api'
-            : 'http://localhost:5000/api';
-            
-    return useProductionUrl ? productionUrl : devUrl;
+    return useProductionUrl ? productionUrl : _getDevUrl();
   }
   
   // For debugging

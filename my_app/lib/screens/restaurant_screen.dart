@@ -10,6 +10,9 @@ import 'package:google_fonts/google_fonts.dart';
 import '../widgets/cart.dart';
 import '../widgets/loading_screen.dart';
 import 'dart:ui';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'dart:math' as math;
+import 'dart:io';
 
 class RestaurantScreen extends StatefulWidget {
   final String restaurantId;
@@ -130,6 +133,7 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
 
     final screenSize = MediaQuery.of(context).size;
     final isSmallScreen = screenSize.width < 600;
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
 
     return Scaffold(
       body: Stack(
@@ -144,6 +148,11 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
               _buildCategoryList(),
               _buildSearchBar(isSmallScreen),
               _buildMenuList(isSmallScreen),
+              SliverPadding(
+                padding: EdgeInsets.only(
+                  bottom: bottomPadding + 80,
+                ),
+              ),
             ],
           ),
           _buildFloatingCart(),
@@ -231,10 +240,16 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
           children: [
             Hero(
               tag: 'restaurant_${widget.restaurantId}',
-              child: Image.network(
-                _restaurant?['imageUrl'] ?? '',
+              child: CachedNetworkImage(
+                imageUrl: _restaurant?['imageUrl'] ?? '',
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
+                placeholder: (context, url) => Container(
+                  color: Colors.grey[200],
+                  child: const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                ),
+                errorWidget: (context, url, error) => Container(
                   color: Colors.grey[200],
                   child: Icon(
                     Icons.restaurant_rounded,
@@ -242,6 +257,8 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
                     color: Colors.grey[400],
                   ),
                 ),
+                memCacheWidth: 800,
+                memCacheHeight: 500,
               ),
             ),
             Container(
@@ -490,47 +507,88 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
   }
 
   Widget _buildMenuList(bool isSmallScreen) {
-    return SliverList(
-      delegate: SliverChildBuilderDelegate(
-        (context, index) {
-          final item = _filteredItems[index];
-          return FadeTransition(
-            opacity: _fadeAnimation,
-            child: SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0, 0.2),
-                end: Offset.zero,
-              ).animate(CurvedAnimation(
-                parent: _animationController,
-                curve: Interval(
-                  index * 0.1,
-                  1.0,
-                  curve: Curves.easeOut,
-                ),
-              )),
-              child: MenuItemCard(
-                name: item['name'] ?? '',
-                description: item['sizes']?.first['name'] ?? '',
-                price: item['price']?.toDouble() ?? 0.0,
-                imageUrl: item['imageUrl'] ?? '',
-                sizes: List<Map<String, dynamic>>.from(item['sizes'] ?? []),
-                onAddToCart: () => _addToCart(item),
-                isSmallScreen: isSmallScreen,
+    if (_filteredItems.isEmpty) {
+      return SliverFillRemaining(
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.no_meals_rounded,
+                size: 64,
+                color: Colors.grey[400],
               ),
-            ),
-          );
-        },
-        childCount: _filteredItems.length,
+              const SizedBox(height: 16),
+              Text(
+                'No items found',
+                style: GoogleFonts.montserrat(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey[600],
+                ),
+              ),
+              if (_searchQuery.isNotEmpty || _selectedCategory != 'All') ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Try adjusting your filters',
+                  style: GoogleFonts.montserrat(
+                    fontSize: 14,
+                    color: Colors.grey[500],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            final item = _filteredItems[index];
+            return FadeTransition(
+              opacity: _fadeAnimation,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.2),
+                  end: Offset.zero,
+                ).animate(CurvedAnimation(
+                  parent: _animationController,
+                  curve: Interval(
+                    (index / _filteredItems.length) * 0.6,
+                    math.min(1.0, (index / _filteredItems.length) * 0.6 + 0.4),
+                    curve: Curves.easeOut,
+                  ),
+                )),
+                child: MenuItemCard(
+                  name: item['name'] ?? '',
+                  description: item['sizes']?.first['name'] ?? '',
+                  price: item['price']?.toDouble() ?? 0.0,
+                  imageUrl: item['imageUrl'] ?? '',
+                  sizes: List<Map<String, dynamic>>.from(item['sizes'] ?? []),
+                  onAddToCart: () => _addToCart(item),
+                  isSmallScreen: isSmallScreen,
+                ),
+              ),
+            );
+          },
+          childCount: _filteredItems.length,
+        ),
       ),
     );
   }
 
   Widget _buildFloatingCart() {
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    
     return Consumer<CartProvider>(
       builder: (context, cart, child) {
         return AnimatedPositioned(
           duration: const Duration(milliseconds: 300),
-          bottom: cart.itemCount > 0 ? 24 : -100,
+          bottom: cart.itemCount > 0 ? bottomPadding + 16 : -100,
           left: 24,
           right: 24,
           child: CartButton(
@@ -576,25 +634,89 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
         ),
       );
       
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Added $itemName to cart',
-            style: GoogleFonts.montserrat(),
+          content: Row(
+            children: [
+              const Icon(
+                Icons.check_circle_outline_rounded,
+                color: Colors.white,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Added $itemName to cart',
+                  style: GoogleFonts.montserrat(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
           ),
-          backgroundColor: AppTheme.success,
+          duration: const Duration(milliseconds: 1500),
+          backgroundColor: AppTheme.success.withOpacity(0.95),
           behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          margin: EdgeInsets.only(
+            bottom: MediaQuery.of(context).size.height * 0.1,
+            left: 16,
+            right: 16,
+          ),
+          elevation: 4,
+          padding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 12,
+          ),
         ),
       );
     } catch (e) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            'Failed to add item to cart: ${e.toString()}',
-            style: GoogleFonts.montserrat(),
+          content: Row(
+            children: [
+              const Icon(
+                Icons.error_outline_rounded,
+                color: Colors.white,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Failed to add item to cart',
+                  style: GoogleFonts.montserrat(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
           ),
-          backgroundColor: AppTheme.error,
+          duration: const Duration(milliseconds: 2000),
+          backgroundColor: AppTheme.error.withOpacity(0.95),
           behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          margin: EdgeInsets.only(
+            bottom: MediaQuery.of(context).size.height * 0.1,
+            left: 16,
+            right: 16,
+          ),
+          elevation: 4,
+          padding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 12,
+          ),
         ),
       );
     }
@@ -624,26 +746,37 @@ class MenuItemCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
-    final cardHeight = screenWidth < 360 ? 90.0 : 
-                      screenWidth < 400 ? 100.0 :
-                      screenWidth < 600 ? 110.0 : 120.0;
+    final screenHeight = MediaQuery.of(context).size.height;
+    final density = MediaQuery.of(context).devicePixelRatio;
     
-    final imageSize = screenWidth < 360 ? 70.0 :
+    final cardHeight = screenHeight < 700 ? 110.0 :
+                      screenWidth < 360 ? 110.0 : 
+                      screenWidth < 400 ? 120.0 :
+                      screenWidth < 600 ? 130.0 : 140.0;
+    
+    final imageSize = screenHeight < 700 ? 70.0 :
+                     screenWidth < 360 ? 70.0 :
                      screenWidth < 400 ? 80.0 :
                      screenWidth < 600 ? 90.0 : 100.0;
     
-    final titleFontSize = screenWidth < 360 ? 14.0 :
-                         screenWidth < 400 ? 15.0 :
-                         screenWidth < 600 ? 16.0 : 17.0;
+    final titleFontSize = screenHeight < 700 ? 13.0 :
+                         screenWidth < 360 ? 13.0 :
+                         screenWidth < 400 ? 14.0 :
+                         screenWidth < 600 ? 15.0 : 16.0;
     
-    final descFontSize = screenWidth < 360 ? 11.0 :
+    final descFontSize = screenHeight < 700 ? 11.0 :
+                        screenWidth < 360 ? 11.0 :
                         screenWidth < 400 ? 12.0 :
                         screenWidth < 600 ? 13.0 : 14.0;
 
+    final horizontalPadding = screenWidth < 360 ? 8.0 :
+                             screenWidth < 400 ? 10.0 :
+                             screenWidth < 600 ? 12.0 : 16.0;
+
     return Container(
       margin: EdgeInsets.symmetric(
-        horizontal: screenWidth < 400 ? 12 : 16,
-        vertical: screenWidth < 400 ? 6 : 8,
+        horizontal: horizontalPadding,
+        vertical: screenHeight < 700 ? 4 : 6,
       ),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -662,54 +795,65 @@ class MenuItemCard extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
           onTap: () => _showItemDetails(context),
-          child: Container(
+          child: SizedBox(
             height: cardHeight,
-            padding: EdgeInsets.all(screenWidth < 400 ? 8 : 12),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Hero(
-                  tag: 'menu_item_$name',
-                  child: Container(
-                    width: imageSize,
-                    height: imageSize,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.1),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.network(
-                        imageUrl,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
-                          color: Colors.grey[100],
-                          child: Icon(
-                            Icons.restaurant_rounded,
-                            size: imageSize * 0.4,
-                            color: Colors.grey[400],
+            child: Padding(
+              padding: EdgeInsets.all(screenWidth < 400 ? 8 : 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Hero(
+                    tag: 'menu_item_$name',
+                    child: Container(
+                      width: imageSize,
+                      height: imageSize,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
                           ),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: CachedNetworkImage(
+                          imageUrl: imageUrl,
+                          fit: BoxFit.cover,
+                          placeholder: (context, url) => Container(
+                            color: Colors.grey[100],
+                            child: const Center(
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(Colors.grey),
+                              ),
+                            ),
+                          ),
+                          errorWidget: (context, url, error) => Container(
+                            color: Colors.grey[100],
+                            child: Icon(
+                              Icons.restaurant_rounded,
+                              size: imageSize * 0.4,
+                              color: Colors.grey[400],
+                            ),
+                          ),
+                          memCacheWidth: (imageSize * MediaQuery.of(context).devicePixelRatio).toInt(),
+                          memCacheHeight: (imageSize * MediaQuery.of(context).devicePixelRatio).toInt(),
+                          maxWidthDiskCache: 800,
+                          maxHeightDiskCache: 800,
                         ),
                       ),
                     ),
                   ),
-                ),
-                SizedBox(width: screenWidth < 400 ? 8 : 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                  SizedBox(width: screenWidth < 400 ? 8 : 12),
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        return Column(
                           mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
                               name,
@@ -722,7 +866,7 @@ class MenuItemCard extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                             ),
                             if (description.isNotEmpty) ...[
-                              SizedBox(height: screenWidth < 400 ? 1 : 2),
+                              SizedBox(height: screenWidth < 400 ? 2 : 4),
                               Text(
                                 description,
                                 style: GoogleFonts.montserrat(
@@ -733,51 +877,52 @@ class MenuItemCard extends StatelessWidget {
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ],
+                            const Spacer(),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Text(
+                                  '₹${price.toStringAsFixed(2)}',
+                                  style: GoogleFonts.montserrat(
+                                    fontSize: titleFontSize,
+                                    fontWeight: FontWeight.bold,
+                                    color: AppTheme.primary,
+                                  ),
+                                ),
+                                ElevatedButton(
+                                  onPressed: onAddToCart,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.black87,
+                                    foregroundColor: Colors.white,
+                                    elevation: 0,
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: screenWidth < 400 ? 12 : 16,
+                                      vertical: screenWidth < 400 ? 4 : 6,
+                                    ),
+                                    minimumSize: Size(screenWidth < 400 ? 50 : 60, 0),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    'ADD',
+                                    style: GoogleFonts.montserrat(
+                                      fontSize: descFontSize,
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ],
-                        ),
-                      ),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Text(
-                            '₹${price.toStringAsFixed(2)}',
-                            style: GoogleFonts.montserrat(
-                              fontSize: titleFontSize,
-                              fontWeight: FontWeight.bold,
-                              color: AppTheme.primary,
-                            ),
-                          ),
-                          ElevatedButton(
-                            onPressed: onAddToCart,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.black87,
-                              foregroundColor: Colors.white,
-                              elevation: 0,
-                              padding: EdgeInsets.symmetric(
-                                horizontal: screenWidth < 400 ? 12 : 16,
-                                vertical: screenWidth < 400 ? 4 : 6,
-                              ),
-                              minimumSize: Size(screenWidth < 400 ? 50 : 60, 0),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                            ),
-                            child: Text(
-                              'ADD',
-                              style: GoogleFonts.montserrat(
-                                fontSize: descFontSize,
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                        );
+                      },
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -805,11 +950,25 @@ class MenuItemCard extends StatelessWidget {
                   tag: 'menu_item_$name',
                   child: Container(
                     height: 250,
-                    decoration: BoxDecoration(
-                      image: DecorationImage(
-                        image: NetworkImage(imageUrl),
-                        fit: BoxFit.cover,
+                    child: CachedNetworkImage(
+                      imageUrl: imageUrl,
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) => Container(
+                        color: Colors.grey[100],
+                        child: const Center(
+                          child: CircularProgressIndicator(),
+                        ),
                       ),
+                      errorWidget: (context, url, error) => Container(
+                        color: Colors.grey[100],
+                        child: Icon(
+                          Icons.restaurant_rounded,
+                          size: 64,
+                          color: Colors.grey[400],
+                        ),
+                      ),
+                      memCacheWidth: 800,
+                      memCacheHeight: 500,
                     ),
                   ),
                 ),

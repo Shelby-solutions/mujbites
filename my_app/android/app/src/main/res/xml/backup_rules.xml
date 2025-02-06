@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <include domain="sharedpref" path="."/>
+    <include domain="database" path="."/>
+    <include domain="root" path="."/>
+    <exclude domain="sharedpref" path="WebView.xml"/>
+    <exclude domain="database" path="webview.db"/>
+    <exclude domain="database" path="webviewCache.db"/>
+</full-backup-content> 

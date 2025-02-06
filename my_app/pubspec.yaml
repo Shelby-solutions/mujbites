@@ -34,6 +34,9 @@ dependencies:
   shared_preferences: ^2.2.2
   provider: ^6.1.1
   dio: ^5.0.0
+  cached_network_image: ^3.3.1
+  sqflite: ^2.3.2
+  path_provider: ^2.1.2
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -79,13 +82,7 @@ flutter:
   assets:
     - assets/images/
     - assets/animations/
-    - assets/animations/happy.json
-    - assets/animations/stressed.json
-    - assets/animations/tired.json
-    - assets/animations/healthy.json
-    - assets/animations/adventurous.json
-    - assets/animations/indecisive.json
-    - assets/images/placeholder.png
+
 
   fonts:
     - family: Montserrat
