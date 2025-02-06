@@ -7,9 +7,13 @@ const app = express();
 
 // CORS configuration
 app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  origin: [
+    'https://mujbites-app.onrender.com',
+    'http://localhost:3000'
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
 }));
 
 // Middleware
@@ -33,6 +37,15 @@ const routes = require('./routes');
 // Mount routes
 app.use('/api', routes);
 app.use('/api/recommendations', recommendationRoutes);
+
+// Add health check endpoint
+app.get('/api/health', (req, res) => {
+  res.status(200).json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
 
 // Debug route to check all routes
 app.get('/debug/routes', (req, res) => {
@@ -70,9 +83,13 @@ app.use((req, res) => {
 // Error handler
 app.use((err, req, res, next) => {
   console.error('Error:', err);
+  
+  // Don't leak error details in production
+  const isProd = process.env.NODE_ENV === 'production';
   res.status(500).json({
     success: false,
-    message: err.message || 'Internal server error'
+    message: isProd ? 'Internal server error' : err.message,
+    ...(isProd ? {} : { stack: err.stack })
   });
 });
 

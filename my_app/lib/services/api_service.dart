@@ -13,18 +13,14 @@ class ApiService {
   final Dio _dio = Dio(BaseOptions(baseUrl: baseUrl));
 
   static String get baseUrl {
-    if (useProductionUrl) {
-      return 'https://mujbites-app.onrender.com/api';
-    }
-    
-    if (kIsWeb) {
-      return 'http://localhost:5000/api';
-    }
-
-    // For mobile platforms
-    return Platform.isAndroid 
-        ? 'http://10.0.2.2:5000/api'  // Android emulator localhost
-        : 'http://localhost:5000/api'; // iOS simulator
+    const productionUrl = 'https://mujbites-app.onrender.com/api';
+    const devUrl = kIsWeb 
+        ? 'http://localhost:5000/api'
+        : Platform.isAndroid 
+            ? 'http://10.0.2.2:5000/api'
+            : 'http://localhost:5000/api';
+            
+    return useProductionUrl ? productionUrl : devUrl;
   }
   
   // For debugging
@@ -52,27 +48,39 @@ class ApiService {
       final headers = await getHeaders();
       final uri = getUri(path);
       
+      print('Making $method request to: $uri');
+      print('Headers: $headers');
+      if (body != null) print('Body: $body');
+      
       http.Response response;
       
       switch (method) {
         case 'GET':
-          response = await http.get(uri, headers: headers);
+          response = await http.get(uri, headers: headers)
+              .timeout(const Duration(seconds: 30));
           break;
         case 'POST':
-          response = await http.post(uri, headers: headers, body: jsonEncode(body));
+          response = await http.post(uri, headers: headers, body: jsonEncode(body))
+              .timeout(const Duration(seconds: 30));
           break;
         case 'PUT':
-          response = await http.put(uri, headers: headers, body: jsonEncode(body));
+          response = await http.put(uri, headers: headers, body: jsonEncode(body))
+              .timeout(const Duration(seconds: 30));
           break;
         default:
           throw Exception('Unsupported method: $method');
       }
 
+      print('Response status: ${response.statusCode}');
+      print('Response body: ${response.body}');
+
       if (response.statusCode == 200 || response.statusCode == 201) {
         return jsonDecode(response.body);
       } else {
-        throw Exception('Request failed with status: ${response.statusCode}');
+        throw Exception('Request failed with status: ${response.statusCode}, body: ${response.body}');
       }
+    } on TimeoutException {
+      throw Exception('Request timed out. Please check your internet connection.');
     } catch (e) {
       print('API request error: $e');
       rethrow;
@@ -663,6 +671,25 @@ class ApiService {
     } catch (e) {
       print('Error getting recommendations: $e');
       rethrow;
+    }
+  }
+
+  // Add a health check method
+  Future<bool> checkServerConnection() async {
+    try {
+      final response = await http.get(
+        getUri('/health'), // Make sure your backend has a /health endpoint
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => throw TimeoutException('Connection timed out'),
+      );
+
+      print('Server health check status: ${response.statusCode}');
+      return response.statusCode == 200;
+    } catch (e) {
+      print('Server connection error: $e');
+      return false;
     }
   }
 }
