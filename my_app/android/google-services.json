@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "494002299863",
+    "project_id": "mujbites-58abc",
+    "storage_bucket": "mujbites-58abc.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:494002299863:android:3d7394ca402ea0f47ca192",
+        "android_client_info": {
+          "package_name": "com.mujbites.mujbites"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBrZHyqfalEJSIZ8vflthLs9dMg9UvWPGo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

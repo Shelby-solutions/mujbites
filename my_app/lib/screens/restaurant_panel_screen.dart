@@ -37,7 +37,6 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
   @override
   void initState() {
     super.initState();
-    _initializeNotifications();
     _loadUserData();
     _fetchRestaurantData();
   }
@@ -45,6 +44,9 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    if (_restaurantData != null) {
+      _notificationService.unsubscribeFromRestaurantOrders(_restaurantData!['_id']);
+    }
     _notificationService.dispose();
     super.dispose();
   }
@@ -87,6 +89,9 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
           _isLoading = false;
           _error = null;
         });
+        
+        // Subscribe to notifications for this restaurant
+        await _notificationService.subscribeToRestaurantOrders(data['_id']);
       }
     } catch (e) {
       print('Error fetching restaurant data: $e');
@@ -805,4 +810,4 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
         .fold(0.0, (sum, order) => sum + (order['totalAmount'] ?? 0))
         .toStringAsFixed(2);
   }
-}
+} 

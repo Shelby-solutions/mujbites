@@ -3,6 +3,9 @@ import '../widgets/custom_navbar.dart';
 import '../services/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../widgets/loading_screen.dart';
+import 'package:google_fonts/google_fonts.dart';
+import '../theme/app_theme.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -27,6 +30,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final ApiService _apiService = ApiService();
   String? _userRole;
   bool _isLoggedIn = false;
+
+  // Add animation controllers
+  late AnimationController _fadeController;
+  late Animation<double> _fadeAnimation;
 
   @override
   void initState() {
@@ -157,188 +164,283 @@ class _ProfileScreenState extends State<ProfileScreen> {
       return const LoadingScreen();
     }
 
+    final screenSize = MediaQuery.of(context).size;
+    final isSmallScreen = screenSize.width < 600;
+
     return Scaffold(
-      body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Profile',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.amber[50]!,
+              Colors.white,
+            ],
+          ),
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Custom App Bar
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.grey.withOpacity(0.1),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
                     ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.settings),
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (context) => const SettingsScreen()),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFFF9F9F9), Color(0xFFE0E0E0)],
-                  ),
+                  ],
                 ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Profile',
+                      style: GoogleFonts.playfairDisplay(
+                        fontSize: isSmallScreen ? 24 : 28,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        Icons.settings,
+                        color: AppTheme.primary,
+                        size: isSmallScreen ? 24 : 28,
+                      ),
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              
+              // Profile Content
+              Expanded(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(16.0),
+                  physics: const BouncingScrollPhysics(),
+                  padding: EdgeInsets.all(isSmallScreen ? 16 : 24),
                   child: Form(
                     key: _formKey,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // Profile Header
+                        Center(
+                          child: Column(
+                            children: [
+                              CircleAvatar(
+                                radius: isSmallScreen ? 50 : 60,
+                                backgroundColor: AppTheme.primary,
+                                child: Text(
+                                  _usernameController.text.isNotEmpty 
+                                    ? _usernameController.text[0].toUpperCase()
+                                    : 'U',
+                                  style: GoogleFonts.montserrat(
+                                    fontSize: isSmallScreen ? 32 : 40,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                _usernameController.text,
+                                style: GoogleFonts.montserrat(
+                                  fontSize: isSmallScreen ? 20 : 24,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                _userRole?.toUpperCase() ?? 'USER',
+                                style: GoogleFonts.montserrat(
+                                  fontSize: isSmallScreen ? 12 : 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: AppTheme.primary,
+                                  letterSpacing: 1.2,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 32),
+
+                        // Notification Messages
                         if (_errorMessage != null)
-                          Container(
-                            padding: const EdgeInsets.all(12),
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 300),
                             margin: const EdgeInsets.only(bottom: 16),
+                            padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
                               color: Colors.red.shade50,
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(12),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.red.withOpacity(0.1),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
                             ),
                             child: Row(
                               children: [
-                                const Icon(Icons.error, color: Colors.red),
-                                const SizedBox(width: 8),
-                                Text(
-                                  _errorMessage!,
-                                  style: TextStyle(color: Colors.red.shade900),
+                                Icon(Icons.error_outline, color: Colors.red.shade700),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    _errorMessage!,
+                                    style: GoogleFonts.montserrat(
+                                      color: Colors.red.shade700,
+                                      fontSize: isSmallScreen ? 13 : 14,
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
                           ),
+
                         if (_successMessage != null)
-                          Container(
-                            padding: const EdgeInsets.all(12),
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 300),
                             margin: const EdgeInsets.only(bottom: 16),
+                            padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
                               color: Colors.green.shade50,
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(12),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.green.withOpacity(0.1),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
                             ),
                             child: Row(
                               children: [
-                                const Icon(Icons.check_circle, color: Colors.green),
-                                const SizedBox(width: 8),
-                                Text(
-                                  _successMessage!,
-                                  style: TextStyle(color: Colors.green.shade900),
+                                Icon(Icons.check_circle_outline, color: Colors.green.shade700),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    _successMessage!,
+                                    style: GoogleFonts.montserrat(
+                                      color: Colors.green.shade700,
+                                      fontSize: isSmallScreen ? 13 : 14,
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
                           ),
 
                         // Personal Information Section
-                        Card(
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(16.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    const Icon(Icons.person, color: Color(0xFFFAC744)),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      'Personal Information',
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.grey.shade800,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 16),
-                                _buildTextField(_usernameController, 'Username', enabled: false),
-                                const SizedBox(height: 16),
-                                _buildTextField(_mobileNumberController, 'Mobile Number', enabled: false),
-                                const SizedBox(height: 16),
-                                _buildTextField(_addressController, 'Address'),
-                              ],
+                        _buildSectionCard(
+                          title: 'Personal Information',
+                          icon: Icons.person,
+                          isSmallScreen: isSmallScreen,
+                          children: [
+                            _buildTextField(
+                              _usernameController,
+                              'Username',
+                              enabled: false,
+                              icon: Icons.account_circle,
+                              isSmallScreen: isSmallScreen,
                             ),
-                          ),
+                            const SizedBox(height: 16),
+                            _buildTextField(
+                              _mobileNumberController,
+                              'Mobile Number',
+                              enabled: false,
+                              icon: Icons.phone,
+                              isSmallScreen: isSmallScreen,
+                            ),
+                            const SizedBox(height: 16),
+                            _buildTextField(
+                              _addressController,
+                              'Address',
+                              icon: Icons.location_on,
+                              isSmallScreen: isSmallScreen,
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 24),
 
                         // Security Section
-                        Card(
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(16.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    const Icon(Icons.lock, color: Color(0xFFFAC744)),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      'Security',
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.grey.shade800,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 16),
-                                _buildTextField(_oldPasswordController, 'Old Password', isPassword: true),
-                                const SizedBox(height: 16),
-                                _buildTextField(_newPasswordController, 'New Password', isPassword: true),
-                                const SizedBox(height: 16),
-                                _buildTextField(_confirmPasswordController, 'Confirm New Password', isPassword: true),
-                              ],
+                        _buildSectionCard(
+                          title: 'Security',
+                          icon: Icons.security,
+                          isSmallScreen: isSmallScreen,
+                          children: [
+                            _buildTextField(
+                              _oldPasswordController,
+                              'Old Password',
+                              isPassword: true,
+                              icon: Icons.lock_outline,
+                              isSmallScreen: isSmallScreen,
                             ),
-                          ),
+                            const SizedBox(height: 16),
+                            _buildTextField(
+                              _newPasswordController,
+                              'New Password',
+                              isPassword: true,
+                              icon: Icons.lock,
+                              isSmallScreen: isSmallScreen,
+                            ),
+                            const SizedBox(height: 16),
+                            _buildTextField(
+                              _confirmPasswordController,
+                              'Confirm New Password',
+                              isPassword: true,
+                              icon: Icons.lock_clock,
+                              isSmallScreen: isSmallScreen,
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 24),
+                        const SizedBox(height: 32),
 
-                        // Save Changes Button
+                        // Save Button
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton(
                             onPressed: _updateProfile,
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFFAC744),
-                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              backgroundColor: AppTheme.primary,
+                              foregroundColor: Colors.white,
+                              padding: EdgeInsets.symmetric(
+                                vertical: isSmallScreen ? 16 : 20,
+                              ),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
+                              elevation: 0,
                             ),
-                            child: const Text(
+                            child: Text(
                               'Save Changes',
-                              style: TextStyle(fontSize: 16, color: Colors.white),
+                              style: GoogleFonts.montserrat(
+                                fontSize: isSmallScreen ? 16 : 18,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0.5,
+                              ),
                             ),
                           ),
                         ),
+                        const SizedBox(height: 24),
                       ],
                     ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
       bottomNavigationBar: CustomNavbar(
@@ -349,18 +451,108 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildTextField(TextEditingController controller, String label, {bool enabled = true, bool isPassword = false}) {
+  Widget _buildSectionCard({
+    required String title,
+    required IconData icon,
+    required List<Widget> children,
+    required bool isSmallScreen,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            blurRadius: 10,
+            spreadRadius: 0,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      padding: EdgeInsets.all(isSmallScreen ? 16 : 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                icon,
+                color: AppTheme.primary,
+                size: isSmallScreen ? 24 : 28,
+              ),
+              const SizedBox(width: 12),
+              Text(
+                title,
+                style: GoogleFonts.montserrat(
+                  fontSize: isSmallScreen ? 18 : 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTextField(
+    TextEditingController controller,
+    String label, {
+    bool enabled = true,
+    bool isPassword = false,
+    required IconData icon,
+    required bool isSmallScreen,
+  }) {
     return TextFormField(
       controller: controller,
       enabled: enabled,
       obscureText: isPassword,
+      style: GoogleFonts.montserrat(
+        fontSize: isSmallScreen ? 14 : 16,
+        color: enabled ? Colors.black87 : Colors.grey[600],
+      ),
       decoration: InputDecoration(
         labelText: label,
+        labelStyle: GoogleFonts.montserrat(
+          fontSize: isSmallScreen ? 14 : 16,
+          color: Colors.grey[600],
+        ),
+        prefixIcon: Icon(
+          icon,
+          color: enabled ? AppTheme.primary : Colors.grey[400],
+          size: isSmallScreen ? 20 : 24,
+        ),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(
+            color: Colors.grey[300]!,
+            width: 1,
+          ),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(
+            color: Colors.grey[300]!,
+            width: 1,
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(
+            color: AppTheme.primary,
+            width: 2,
+          ),
         ),
         filled: !enabled,
-        fillColor: Colors.grey.shade100,
+        fillColor: enabled ? Colors.transparent : Colors.grey[50],
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: isSmallScreen ? 12 : 16,
+        ),
       ),
       validator: (value) {
         if (value == null || value.isEmpty) {
@@ -372,7 +564,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 }
 
-// Settings Screen
+// Settings Screen with updated design
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
@@ -382,138 +574,187 @@ class SettingsScreen extends StatelessWidget {
     Navigator.pushReplacementNamed(context, '/login');
   }
 
+  Future<void> _openTermsOfUse() async {
+    final Uri url = Uri.parse('https://archive.org/details/muj-bites-terms-of-use');
+    try {
+      if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+        throw Exception('Could not launch $url');
+      }
+    } catch (e) {
+      print('Error launching URL: $e');
+    }
+  }
+
+  Future<void> _openPrivacyPolicy() async {
+    final Uri url = Uri.parse('https://archive.org/details/muj-bites-privacy-policy');
+    try {
+      if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+        throw Exception('Could not launch $url');
+      }
+    } catch (e) {
+      print('Error launching URL: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isSmallScreen = MediaQuery.of(context).size.width < 600;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Settings',
-            style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black87)),
-        backgroundColor: const Color(0xFFFAC744),
+        title: Text(
+          'Settings',
+          style: GoogleFonts.playfairDisplay(
+            fontSize: isSmallScreen ? 20 : 24,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+        backgroundColor: AppTheme.primary,
         elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.black87),
       ),
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFFF9F9F9), Color(0xFFE0E0E0)],
+            colors: [
+              Colors.amber[50]!,
+              Colors.white,
+            ],
           ),
         ),
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.all(isSmallScreen ? 16 : 24),
           children: [
-            // Account Settings Section
-            _buildSectionHeader('Account Settings', Icons.person_outline),
-            Card(
-              elevation: 2,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              child: Column(
-                children: [
-                  _buildSettingTile(
-                    'Edit Profile',
-                    Icons.edit,
-                    () => Navigator.pop(context),
+            // Terms of Use Button
+            Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(0.1),
+                    blurRadius: 10,
+                    offset: const Offset(0, 2),
                   ),
                 ],
               ),
+              child: ListTile(
+                leading: Icon(
+                  Icons.description_outlined,
+                  color: AppTheme.primary,
+                  size: isSmallScreen ? 24 : 28,
+                ),
+                title: Text(
+                  'Terms of Use',
+                  style: GoogleFonts.montserrat(
+                    fontSize: isSmallScreen ? 16 : 18,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.black87,
+                  ),
+                ),
+                trailing: Icon(
+                  Icons.open_in_new,
+                  color: Colors.grey[400],
+                  size: isSmallScreen ? 20 : 24,
+                ),
+                onTap: _openTermsOfUse,
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: isSmallScreen ? 16 : 24,
+                  vertical: isSmallScreen ? 8 : 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
             ),
-            const SizedBox(height: 24),
 
-            // Notifications Section
-            _buildSectionHeader('Notifications', Icons.notifications_none),
-            Card(
-              elevation: 2,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              child: Column(
-                children: [
-                  _buildSwitchTile(
-                    'Push Notifications',
-                    Icons.notifications_active_outlined,
-                    true,
-                    (value) {},
+            // Privacy Policy Button
+            Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(0.1),
+                    blurRadius: 10,
+                    offset: const Offset(0, 2),
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: 24),
-
-            // About Section
-            _buildSectionHeader('About', Icons.info_outline),
-            Card(
-              elevation: 2,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              child: Column(
-                children: [
-                  _buildSettingTile(
-                    'App Version',
-                    Icons.info_outline,
-                    () {},
-                    trailing: const Text('1.0.0',
-                        style: TextStyle(color: Colors.grey)),
+              child: ListTile(
+                leading: Icon(
+                  Icons.privacy_tip_outlined,
+                  color: AppTheme.primary,
+                  size: isSmallScreen ? 24 : 28,
+                ),
+                title: Text(
+                  'Privacy Policy',
+                  style: GoogleFonts.montserrat(
+                    fontSize: isSmallScreen ? 16 : 18,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.black87,
                   ),
-                ],
+                ),
+                trailing: Icon(
+                  Icons.open_in_new,
+                  color: Colors.grey[400],
+                  size: isSmallScreen ? 20 : 24,
+                ),
+                onTap: _openPrivacyPolicy,
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: isSmallScreen ? 16 : 24,
+                  vertical: isSmallScreen ? 8 : 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
-            const SizedBox(height: 24),
-
+            
             // Logout Button
-            Card(
-              elevation: 2,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              child: _buildSettingTile(
-                'Logout',
-                Icons.logout,
-                () => _logout(context),
-                textColor: Colors.red,
-                iconColor: Colors.red,
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withOpacity(0.1),
+                    blurRadius: 10,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: ListTile(
+                leading: Icon(
+                  Icons.logout,
+                  color: Colors.red[400],
+                  size: isSmallScreen ? 24 : 28,
+                ),
+                title: Text(
+                  'Logout',
+                  style: GoogleFonts.montserrat(
+                    fontSize: isSmallScreen ? 16 : 18,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.red[400],
+                  ),
+                ),
+                onTap: () => _logout(context),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: isSmallScreen ? 16 : 24,
+                  vertical: isSmallScreen ? 8 : 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildSectionHeader(String title, IconData icon) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-      child: Row(
-        children: [
-          Icon(icon, size: 20, color: const Color(0xFFFAC744)),
-          const SizedBox(width: 8),
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSettingTile(String title, IconData icon, VoidCallback onTap,
-      {Widget? trailing, Color? textColor, Color? iconColor}) {
-    return ListTile(
-      leading: Icon(icon, color: iconColor ?? Colors.black54),
-      title: Text(title,
-          style: TextStyle(color: textColor ?? Colors.black87)),
-      trailing: trailing ?? const Icon(Icons.chevron_right, color: Colors.black54),
-      onTap: onTap,
-    );
-  }
-
-  Widget _buildSwitchTile(String title, IconData icon, bool value,
-      Function(bool) onChanged) {
-    return SwitchListTile(
-      secondary: Icon(icon, color: Colors.black54),
-      title: Text(title, style: const TextStyle(color: Colors.black87)),
-      value: value,
-      onChanged: onChanged,
-      activeColor: const Color(0xFFFAC744),
     );
   }
 }

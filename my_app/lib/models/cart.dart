@@ -4,7 +4,7 @@ class CartItem {
   final double price;
   final String size;
   final String restaurantId;
-  final String restaurantName; // Add this field
+  final String restaurantName;
   int quantity;
 
   CartItem({
@@ -13,7 +13,7 @@ class CartItem {
     required this.price,
     required this.size,
     required this.restaurantId,
-    required this.restaurantName, // Add this parameter
+    required this.restaurantName,
     this.quantity = 1,
   });
 
@@ -25,7 +25,7 @@ class CartItem {
       'size': size,
       'quantity': quantity,
       'restaurantId': restaurantId,
-      'restaurantName': restaurantName, // Add this field
+      'restaurantName': restaurantName,
     };
   }
 
@@ -36,8 +36,8 @@ class CartItem {
       price: json['price'].toDouble(),
       size: json['size'],
       restaurantId: json['restaurantId'],
-      restaurantName: json['restaurantName'], // Add this field
+      restaurantName: json['restaurantName'],
       quantity: json['quantity'],
     );
   }
-}
+} 

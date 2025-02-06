@@ -9,7 +9,6 @@ import '../theme/app_theme.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../widgets/cart.dart';
 import '../widgets/loading_screen.dart';
-import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import 'dart:ui';
 
 class RestaurantScreen extends StatefulWidget {
@@ -21,113 +20,102 @@ class RestaurantScreen extends StatefulWidget {
   State<RestaurantScreen> createState() => _RestaurantScreenState();
 }
 
-// Add new import for animations
-
 class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerProviderStateMixin {
   final ApiService _apiService = ApiService();
-  late AnimationController _animationController;
-  late Animation<double> _fadeAnimation;
-  
-  // Add scroll controller and offset
-  late ScrollController _scrollController;
-  double _scrollOffset = 0;
-  
-  // Add these missing variables
   Map<String, dynamic>? _restaurant;
   List<Map<String, dynamic>> _menu = [];
   bool _isLoading = true;
   String _searchQuery = '';
   String _selectedCategory = 'All';
   String? _error;
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
 
   @override
   void initState() {
     super.initState();
-    _scrollController = ScrollController()
-      ..addListener(() {
-        if (mounted) {  // Add mounted check
-          setState(() {
-            _scrollOffset = _scrollController.offset;
-          });
-        }
-      });
+    _fetchRestaurantData();
+    _setupAnimations();
+  }
+
+  void _setupAnimations() {
     _animationController = AnimationController(
       duration: const Duration(milliseconds: 800),
       vsync: this,
     );
-    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
+    _fadeAnimation = CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOut,
     );
-    // Add error handling for data fetching
-    _fetchRestaurantData().catchError((error) {
-      if (mounted) {
-        setState(() {
-          _error = 'Failed to connect to server. Please check your internet connection.';
-          _isLoading = false;
-        });
-      }
-    });
     _animationController.forward();
   }
 
-  // Keep only this enhanced version of _fetchRestaurantData
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
   Future<void> _fetchRestaurantData() async {
     try {
-      if (!mounted) return;
       setState(() => _isLoading = true);
       
-      final response = await _apiService.getRestaurantById(widget.restaurantId)
-          .timeout(const Duration(seconds: 10));
-      
-      if (!mounted) return;
+      final response = await _apiService.getRestaurantById(widget.restaurantId);
+      print('Raw response: $response'); // Debug print
       
       if (response is Map<String, dynamic>) {
         final menuItems = response['menu'];
+        print('Menu items type: ${menuItems.runtimeType}'); // Debug print
+        print('Menu items content: $menuItems'); // Debug print
         
         setState(() {
           _restaurant = response;
           if (menuItems is List) {
             _menu = menuItems.map((item) {
-              try {
-                final sizesMap = item['sizes'] as Map<String, dynamic>;
-                final sizesList = sizesMap.entries.map((entry) => {
-                  'name': entry.key,
-                  'price': entry.value,
-                }).toList();
-                
-                return {
-                  'id': item['_id'],
-                  'name': item['itemName'],
-                  'price': sizesMap.values.first,
-                  'sizes': sizesList,
-                  'category': item['category'] ?? 'Other',
-                  'imageUrl': item['imageUrl'],
-                  'isAvailable': item['isAvailable'] ?? true,
-                  'description': item['description'] ?? '',
-                };
-              } catch (e) {
-                return null;
-              }
-            }).whereType<Map<String, dynamic>>().toList();
+              // Convert sizes object to list of maps
+              final sizesMap = item['sizes'] as Map<String, dynamic>;
+              final sizesList = sizesMap.entries.map((entry) => {
+                'name': entry.key,
+                'price': entry.value,
+              }).toList();
+              
+              return {
+                'id': item['_id'],
+                'name': item['itemName'],
+                'price': sizesMap.values.first, // Use smallest size price as default
+                'sizes': sizesList,
+                'category': item['category'] ?? 'Other',
+                'imageUrl': item['imageUrl'],
+                'isAvailable': item['isAvailable'] ?? true,
+              };
+            }).toList();
+          } else {
+            _menu = [];
           }
           _isLoading = false;
           _error = null;
         });
       }
     } catch (e) {
-      if (!mounted) return;
+      print('Error fetching restaurant data: $e');
       setState(() {
-        _error = 'Failed to load restaurant data. Please try again.';
+        _error = 'Failed to load restaurant data';
         _isLoading = false;
       });
     }
   }
 
-  @override
-  void dispose() {
-    _scrollController.dispose(); // Add controller disposal
-    _animationController.dispose();
-    super.dispose();
+  List<Map<String, dynamic>> get _filteredItems {
+    return _menu.where((item) {
+      final matchesSearch = item['name'].toString().toLowerCase().contains(_searchQuery.toLowerCase());
+      final matchesCategory = _selectedCategory == 'All' || item['category'] == _selectedCategory;
+      return matchesSearch && matchesCategory;
+    }).toList();
+  }
+
+  List<String> get _categories {
+    final categories = _menu.map((item) => item['category'].toString()).toSet().toList();
+    return ['All', ...categories];
   }
 
   @override
@@ -137,93 +125,417 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
     }
 
     if (_error != null) {
-      return Scaffold(
-        body: Center(
-          child: Text(
-            _error!,
-            style: GoogleFonts.montserrat(
-              color: AppTheme.error,
-              fontSize: 16,
-            ),
-          ),
-        ),
-      );
+      return _buildErrorScreen();
     }
 
+    final screenSize = MediaQuery.of(context).size;
+    final isSmallScreen = screenSize.width < 600;
+
     return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(120),
-        child: ClipRRect(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-            child: Container(
-              color: Colors.white.withOpacity(0.7),
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      child: Row(
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.arrow_back_ios),
-                            onPressed: () => Navigator.pop(context),
-                          ),
-                          Expanded(
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 300),
-                              decoration: BoxDecoration(
-                                color: Colors.grey[100],
-                                borderRadius: BorderRadius.circular(25),
-                              ),
-                              child: TextField(
-                                onChanged: (value) {
-                                  setState(() {
-                                    _searchQuery = value;
-                                  });
-                                },
-                                decoration: InputDecoration(
-                                  hintText: 'Search menu items...',
-                                  prefixIcon: const Icon(Icons.search),
-                                  border: InputBorder.none,
-                                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          CartButton(
-                            onTap: () {
-                              showModalBottomSheet(
-                                context: context,
-                                isScrollControlled: true,
-                                backgroundColor: Colors.transparent,
-                                builder: (context) => CartWidget(
-                                  onClose: () => Navigator.pop(context),
-                                ),
-                              );
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
+      body: Stack(
+        children: [
+          CustomScrollView(
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              _buildSliverAppBar(isSmallScreen),
+              SliverToBoxAdapter(
+                child: _buildRestaurantInfo(isSmallScreen),
+              ),
+              _buildCategoryList(),
+              _buildSearchBar(isSmallScreen),
+              _buildMenuList(isSmallScreen),
+            ],
+          ),
+          _buildFloatingCart(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorScreen() {
+    return Scaffold(
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.amber[50]!,
+              Colors.white,
+            ],
+          ),
+        ),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.error_outline_rounded,
+                size: 64,
+                color: AppTheme.error,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Oops! Something went wrong',
+                style: GoogleFonts.montserrat(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[800],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                style: GoogleFonts.montserrat(
+                  color: Colors.grey[600],
+                  fontSize: 16,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: _fetchRestaurantData,
+                icon: const Icon(Icons.refresh_rounded),
+                label: Text(
+                  'Try Again',
+                  style: GoogleFonts.montserrat(),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSliverAppBar(bool isSmallScreen) {
+    return SliverAppBar(
+      expandedHeight: 250,
+      pinned: true,
+      stretch: true,
+      backgroundColor: Colors.transparent,
+      flexibleSpace: FlexibleSpaceBar(
+        background: Stack(
+          fit: StackFit.expand,
+          children: [
+            Hero(
+              tag: 'restaurant_${widget.restaurantId}',
+              child: Image.network(
+                _restaurant?['imageUrl'] ?? '',
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  color: Colors.grey[200],
+                  child: Icon(
+                    Icons.restaurant_rounded,
+                    size: 64,
+                    color: Colors.grey[400],
+                  ),
+                ),
+              ),
+            ),
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Colors.black.withOpacity(0.7),
                   ],
                 ),
+              ),
+            ),
+            Positioned(
+              bottom: 16,
+              left: 16,
+              right: 16,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _restaurant?['name'] ?? '',
+                    style: GoogleFonts.playfairDisplay(
+                      color: Colors.white,
+                      fontSize: isSmallScreen ? 28 : 32,
+                      fontWeight: FontWeight.bold,
+                      shadows: [
+                        Shadow(
+                          color: Colors.black.withOpacity(0.3),
+                          offset: const Offset(0, 2),
+                          blurRadius: 4,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.9),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.star_rounded,
+                              color: Colors.white,
+                              size: 16,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '4.5',
+                              style: GoogleFonts.montserrat(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.9),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '• Open',
+                          style: GoogleFonts.montserrat(
+                            color: Colors.green[700],
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRestaurantInfo(bool isSmallScreen) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_restaurant?['address'] != null) ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Icon(
+                      Icons.location_on_rounded,
+                      color: AppTheme.primary,
+                      size: isSmallScreen ? 20 : 24,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      _restaurant!['address'],
+                      style: GoogleFonts.montserrat(
+                        fontSize: isSmallScreen ? 14 : 16,
+                        color: Colors.grey[800],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
+          Text(
+            'Menu',
+            style: GoogleFonts.playfairDisplay(
+              fontSize: isSmallScreen ? 24 : 28,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCategoryList() {
+    return SliverToBoxAdapter(
+      child: Container(
+        height: 48,
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        child: ListView.builder(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          physics: const BouncingScrollPhysics(),
+          itemCount: _categories.length,
+          itemBuilder: (context, index) {
+            final category = _categories[index];
+            final isSelected = category == _selectedCategory;
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: FilterChip(
+                label: Text(category),
+                selected: isSelected,
+                onSelected: (selected) {
+                  setState(() => _selectedCategory = category);
+                },
+                backgroundColor: Colors.white,
+                selectedColor: AppTheme.primary.withOpacity(0.2),
+                checkmarkColor: AppTheme.primary,
+                labelStyle: GoogleFonts.montserrat(
+                  color: isSelected ? AppTheme.primary : Colors.grey[700],
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                  side: BorderSide(
+                    color: isSelected ? AppTheme.primary : Colors.grey[300]!,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchBar(bool isSmallScreen) {
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: TextField(
+            onChanged: (value) => setState(() => _searchQuery = value),
+            style: GoogleFonts.montserrat(
+              fontSize: isSmallScreen ? 14 : 16,
+            ),
+            decoration: InputDecoration(
+              hintText: 'Search menu items...',
+              hintStyle: GoogleFonts.montserrat(
+                color: Colors.grey[400],
+                fontSize: isSmallScreen ? 14 : 16,
+              ),
+              prefixIcon: Icon(
+                Icons.search_rounded,
+                color: AppTheme.primary,
+                size: isSmallScreen ? 20 : 24,
+              ),
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 12,
               ),
             ),
           ),
         ),
       ),
-      // Removed duplicate appBar and extendBodyBehindAppBar declarations
-      floatingActionButton: AnimatedSlide(
-        duration: const Duration(milliseconds: 300),
-        offset: Offset(0, _scrollOffset > 100 ? 0 : 2),
-        child: AnimatedOpacity(
+    );
+  }
+
+  Widget _buildMenuList(bool isSmallScreen) {
+    return SliverList(
+      delegate: SliverChildBuilderDelegate(
+        (context, index) {
+          final item = _filteredItems[index];
+          return FadeTransition(
+            opacity: _fadeAnimation,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, 0.2),
+                end: Offset.zero,
+              ).animate(CurvedAnimation(
+                parent: _animationController,
+                curve: Interval(
+                  index * 0.1,
+                  1.0,
+                  curve: Curves.easeOut,
+                ),
+              )),
+              child: MenuItemCard(
+                name: item['name'] ?? '',
+                description: item['sizes']?.first['name'] ?? '',
+                price: item['price']?.toDouble() ?? 0.0,
+                imageUrl: item['imageUrl'] ?? '',
+                sizes: List<Map<String, dynamic>>.from(item['sizes'] ?? []),
+                onAddToCart: () => _addToCart(item),
+                isSmallScreen: isSmallScreen,
+              ),
+            ),
+          );
+        },
+        childCount: _filteredItems.length,
+      ),
+    );
+  }
+
+  Widget _buildFloatingCart() {
+    return Consumer<CartProvider>(
+      builder: (context, cart, child) {
+        return AnimatedPositioned(
           duration: const Duration(milliseconds: 300),
-          opacity: _scrollOffset > 100 ? 1 : 0,
+          bottom: cart.itemCount > 0 ? 24 : -100,
+          left: 24,
+          right: 24,
           child: CartButton(
-            onTap: () {
+            itemCount: cart.itemCount,
+            onPressed: () {
               showModalBottomSheet(
                 context: context,
                 isScrollControlled: true,
@@ -232,323 +544,14 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
               );
             },
           ),
-        ),
-      ),
-      body: CustomScrollView(
-        controller: _scrollController,
-        physics: const BouncingScrollPhysics(),
-        slivers: [
-          SliverAppBar(
-            expandedHeight: 350,
-            pinned: true,
-            stretch: true,
-            backgroundColor: Colors.transparent,
-            flexibleSpace: FlexibleSpaceBar(
-              stretchModes: const [
-                StretchMode.zoomBackground,
-                StretchMode.blurBackground,
-              ],
-              background: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Hero(
-                    tag: 'restaurant-${widget.restaurantId}',
-                    child: Image.network(
-                      _restaurant?['imageUrl'] ?? '',
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                        color: Colors.grey.shade200,
-                        child: Icon(Icons.restaurant, color: Colors.grey.shade400, size: 60),
-                      ),
-                    ),
-                  ),
-                  Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          Colors.black.withOpacity(0.5),
-                          Colors.black.withOpacity(0.8),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          
-          // Update the search and filter section
-          SliverToBoxAdapter(
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    offset: const Offset(0, -2),
-                    blurRadius: 10,
-                  ),
-                ],
-              ),
-              child: Column(
-                children: [
-                  // Search Bar
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: TextField(
-                      onChanged: (value) => setState(() => _searchQuery = value),
-                      decoration: InputDecoration(
-                        hintText: 'Search menu items...',
-                        hintStyle: GoogleFonts.montserrat(color: Colors.grey.shade600),
-                        prefixIcon: Icon(Icons.search, color: Colors.grey.shade600),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  // Category Filters
-                  SizedBox(
-                    height: 40,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _categories.length,
-                      itemBuilder: (context, index) {
-                        final category = _categories[index];
-                        final isSelected = _selectedCategory == category;
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            child: FilterChip(
-                              selected: isSelected,
-                              label: Text(category),
-                              onSelected: (_) => setState(() => _selectedCategory = category),
-                              backgroundColor: Colors.white,
-                              selectedColor: AppTheme.primary,
-                              checkmarkColor: Colors.white,
-                              labelStyle: GoogleFonts.montserrat(
-                                color: isSelected ? Colors.white : AppTheme.textSecondary,
-                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                              ),
-                              padding: const EdgeInsets.symmetric(horizontal: 12),
-                              elevation: isSelected ? 4 : 0,
-                              pressElevation: 2,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          
-          // Update the menu grid styling
-          SliverPadding(
-            padding: const EdgeInsets.all(16),
-            sliver: SliverGrid(
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: MediaQuery.of(context).size.width > 600 ? 3 : 2,
-                mainAxisSpacing: 16,
-                crossAxisSpacing: 16,
-                childAspectRatio: MediaQuery.of(context).size.width > 600 ? 0.8 : 0.7,
-              ),
-              delegate: SliverChildBuilderDelegate(
-                (context, index) => FadeTransition(
-                  opacity: _fadeAnimation,
-                  child: SlideTransition(
-                    position: Tween<Offset>(
-                      begin: const Offset(0, 0.2),
-                      end: Offset.zero,
-                    ).animate(CurvedAnimation(
-                      parent: _animationController,
-                      curve: Interval(
-                        0.4 + (index * 0.1),
-                        1.0,
-                        curve: Curves.easeOut,
-                      ),
-                    )),
-                    child: _buildMenuItemCard(_filteredItems[index]),
-                  ),
-                ),
-                childCount: _filteredItems.length,
-              ),
-            ),
-          ),
-
-          // Responsibility Disclaimer
-          SliverToBoxAdapter(
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                'Note: The products may not exactly match the images displayed. Actual products may vary.',
-                style: GoogleFonts.montserrat(
-                  fontSize: 12,
-                  color: AppTheme.textSecondary,
-                  fontWeight: FontWeight.w500,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Update the _buildMenuItem method
-  Widget _buildMenuItem(Map<String, dynamic> item) {
-    final isAvailable = item['isAvailable'] ?? true;
-    final sizes = List<Map<String, dynamic>>.from(item['sizes'] ?? []);
-
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Image section
-          Stack(
-            children: [
-              ClipRRect(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                child: Image.network(
-                  item['imageUrl'] ?? '',
-                  height: 100, // Reduced height
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                    height: 100, // Match the image height
-                    width: double.infinity,
-                    color: Colors.grey.shade200,
-                    child: Icon(
-                      Icons.restaurant,
-                      color: Colors.grey.shade400,
-                      size: 40,
-                    ),
-                  ),
-                ),
-              ),
-              if (!isAvailable)
-                Container(
-                  height: 100, // Match the image height
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.6),
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                  ),
-                  child: Center(
-                    child: Text(
-                      'Currently Unavailable',
-                      style: GoogleFonts.montserrat(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(8), // Reduced padding
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          item['name'] ?? '',
-                          style: GoogleFonts.playfairDisplay(
-                            fontSize: 14, // Reduced font size
-                            fontWeight: FontWeight.bold,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      Text(
-                        '₹${item['price']?.toString() ?? '0'}',
-                        style: GoogleFonts.montserrat(
-                          fontSize: 12, // Reduced font size
-                          fontWeight: FontWeight.bold,
-                          color: AppTheme.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (sizes.isNotEmpty) ...[
-                    const SizedBox(height: 4), // Reduced spacing
-                    Expanded(
-                      child: SingleChildScrollView(
-                        child: Wrap(
-                          spacing: 2,
-                          runSpacing: 2,
-                          children: sizes.map((size) {
-                            return Chip(
-                              label: Text(
-                                '${size['name']} - ₹${size['price']}',
-                                style: const TextStyle(fontSize: 10), // Reduced font size
-                              ),
-                              backgroundColor: Colors.grey.shade100,
-                              padding: EdgeInsets.zero,
-                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            );
-                          }).toList(),
-                        ),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 4), // Reduced spacing
-                  SizedBox(
-                    width: double.infinity,
-                    height: 32, // Fixed height for button
-                    child: ElevatedButton(
-                      onPressed: isAvailable ? () => _addToCart(item) : null,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.primary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 0),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      child: Text(
-                        isAvailable ? 'Add to Cart' : 'Not Available',
-                        style: GoogleFonts.montserrat(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12, // Reduced font size
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
   void _addToCart(Map<String, dynamic> item) {
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
     try {
-      // Safely get values with null checks
       final itemId = item['_id']?.toString() ?? item['id']?.toString();
       final itemName = item['name']?.toString() ?? 'Unknown Item';
       final itemPrice = (item['price'] ?? 0).toDouble();
@@ -569,7 +572,7 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
           price: (selectedSize['price'] as num).toDouble(),
           size: selectedSize['name']?.toString() ?? 'Regular',
           restaurantId: widget.restaurantId,
-          restaurantName: restaurantName, // Added restaurant name
+          restaurantName: restaurantName,
         ),
       );
       
@@ -596,40 +599,193 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
       );
     }
   }
+}
 
-  // Add these getter methods
-  List<String> get _categories {
-    final categories = _menu
-        .map((item) => item['category'].toString())
-        .toSet()
-        .toList();
-    return ['All', ...categories];
-  }
+class MenuItemCard extends StatelessWidget {
+  final String name;
+  final String description;
+  final double price;
+  final String imageUrl;
+  final VoidCallback onAddToCart;
+  final List<Map<String, dynamic>> sizes;
+  final bool isSmallScreen;
 
-  List<Map<String, dynamic>> get _filteredItems {
-    return _menu.where((item) {
-      final matchesSearch = item['name'].toString().toLowerCase().contains(_searchQuery.toLowerCase());
-      final matchesCategory = _selectedCategory == 'All' || item['category'] == _selectedCategory;
-      return matchesSearch && matchesCategory;
-    }).toList();
-  }
+  const MenuItemCard({
+    Key? key,
+    required this.name,
+    required this.description,
+    required this.price,
+    required this.imageUrl,
+    required this.onAddToCart,
+    required this.isSmallScreen,
+    this.sizes = const [],
+  }) : super(key: key);
 
-  // Enhanced menu item card with animations and tap functionality
-  Widget _buildAnimatedMenuItemCard(Map<String, dynamic> item) {
-    return AnimationConfiguration.staggeredGrid(
-      position: _menu.indexOf(item),
-      duration: const Duration(milliseconds: 375),
-      columnCount: 2,
-      child: SlideAnimation(
-        verticalOffset: 50.0,
-        child: FadeInAnimation(
-          child: _buildMenuItemCard(item)
+  @override
+  Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final cardHeight = screenWidth < 360 ? 90.0 : 
+                      screenWidth < 400 ? 100.0 :
+                      screenWidth < 600 ? 110.0 : 120.0;
+    
+    final imageSize = screenWidth < 360 ? 70.0 :
+                     screenWidth < 400 ? 80.0 :
+                     screenWidth < 600 ? 90.0 : 100.0;
+    
+    final titleFontSize = screenWidth < 360 ? 14.0 :
+                         screenWidth < 400 ? 15.0 :
+                         screenWidth < 600 ? 16.0 : 17.0;
+    
+    final descFontSize = screenWidth < 360 ? 11.0 :
+                        screenWidth < 400 ? 12.0 :
+                        screenWidth < 600 ? 13.0 : 14.0;
+
+    return Container(
+      margin: EdgeInsets.symmetric(
+        horizontal: screenWidth < 400 ? 12 : 16,
+        vertical: screenWidth < 400 ? 6 : 8,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => _showItemDetails(context),
+          child: Container(
+            height: cardHeight,
+            padding: EdgeInsets.all(screenWidth < 400 ? 8 : 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Hero(
+                  tag: 'menu_item_$name',
+                  child: Container(
+                    width: imageSize,
+                    height: imageSize,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.network(
+                        imageUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          color: Colors.grey[100],
+                          child: Icon(
+                            Icons.restaurant_rounded,
+                            size: imageSize * 0.4,
+                            color: Colors.grey[400],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                SizedBox(width: screenWidth < 400 ? 8 : 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              name,
+                              style: GoogleFonts.montserrat(
+                                fontSize: titleFontSize,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.black87,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            if (description.isNotEmpty) ...[
+                              SizedBox(height: screenWidth < 400 ? 1 : 2),
+                              Text(
+                                description,
+                                style: GoogleFonts.montserrat(
+                                  fontSize: descFontSize,
+                                  color: Colors.grey[600],
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Text(
+                            '₹${price.toStringAsFixed(2)}',
+                            style: GoogleFonts.montserrat(
+                              fontSize: titleFontSize,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.primary,
+                            ),
+                          ),
+                          ElevatedButton(
+                            onPressed: onAddToCart,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.black87,
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              padding: EdgeInsets.symmetric(
+                                horizontal: screenWidth < 400 ? 12 : 16,
+                                vertical: screenWidth < 400 ? 4 : 6,
+                              ),
+                              minimumSize: Size(screenWidth < 400 ? 50 : 60, 0),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                            ),
+                            child: Text(
+                              'ADD',
+                              style: GoogleFonts.montserrat(
+                                fontSize: descFontSize,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
 
-  void _showItemDetails(Map<String, dynamic> item) {
+  void _showItemDetails(BuildContext context) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -643,271 +799,79 @@ class _RestaurantScreenState extends State<RestaurantScreen> with SingleTickerPr
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Item image with gradient overlay
             Stack(
               children: [
-                ClipRRect(
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-                  child: Image.network(
-                    item['imageUrl'] ?? '',
-                    height: 200,
-                    width: double.infinity,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      height: 200,
-                      color: Colors.grey.shade200,
-                      child: Icon(Icons.restaurant, color: Colors.grey.shade400, size: 60),
+                Hero(
+                  tag: 'menu_item_$name',
+                  child: Container(
+                    height: 250,
+                    decoration: BoxDecoration(
+                      image: DecorationImage(
+                        image: NetworkImage(imageUrl),
+                        fit: BoxFit.cover,
+                      ),
                     ),
                   ),
                 ),
-
-                // Add gradient overlay
-                Container(
-                  height: 200,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.transparent,
-                        Colors.black.withOpacity(0.5),
-                      ],
-                    ),
-                  ),
-                ),
-                // Close button with background
                 Positioned(
                   top: 16,
                   right: 16,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.9),
-                      shape: BoxShape.circle,
-                    ),
-                    child: IconButton(
-                      icon: const Icon(Icons.close, color: Colors.black),
-                      onPressed: () => Navigator.pop(context),
+                  child: IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                    color: Colors.white,
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.black54,
                     ),
                   ),
                 ),
               ],
             ),
-            // Item details
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item['name'] ?? '',
-                      style: GoogleFonts.playfairDisplay(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    if (item['description']?.isNotEmpty ?? false) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        item['description'],
-                        style: GoogleFonts.montserrat(
-                          fontSize: 14,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 16),
-                    // Size selection
-                    if (item['sizes']?.isNotEmpty ?? false) ...[
-                      Text(
-                        'Available Sizes',
-                        style: GoogleFonts.montserrat(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: (item['sizes'] as List).map((size) {
-                          return ChoiceChip(
-                            label: Text('${size['name']} - ₹${size['price']}'),
-                            selected: false,
-                            onSelected: (_) {},
-                          );
-                        }).toList(),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-            // Add to cart button
             Padding(
               padding: const EdgeInsets.all(16),
-              child: ElevatedButton(
-                onPressed: () {
-                  _addToCart(item);
-                  Navigator.pop(context);
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.primary,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                child: Text(
-                  'Add to Cart',
-                  style: GoogleFonts.montserrat(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // Base menu item card with content and tap handler
-  Widget _buildMenuItemCard(Map<String, dynamic> item) {
-    final isAvailable = item['isAvailable'] ?? true;
-    final sizes = List<Map<String, dynamic>>.from(item['sizes'] ?? []);
-
-    return GestureDetector(
-      onTap: () => _showItemDetails(item),
-      child: Card(
-        elevation: 4,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Image section
-            Stack(
-              children: [
-                ClipRRect(
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                  child: Image.network(
-                    item['imageUrl'] ?? '',
-                    height: 100,
-                    width: double.infinity,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      height: 100,
-                      width: double.infinity,
-                      color: Colors.grey.shade200,
-                      child: Icon(
-                        Icons.restaurant,
-                        color: Colors.grey.shade400,
-                        size: 40,
-                      ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    style: GoogleFonts.montserrat(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                ),
-                if (!isAvailable)
-                  Container(
-                    height: 100,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.6),
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                    ),
-                    child: Center(
-                      child: Text(
-                        'Currently Unavailable',
-                        style: GoogleFonts.montserrat(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                  const SizedBox(height: 8),
+                  Text(
+                    description,
+                    style: GoogleFonts.montserrat(
+                      fontSize: 16,
+                      color: Colors.grey[600],
                     ),
                   ),
-              ],
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            item['name'] ?? '',
-                            style: GoogleFonts.playfairDisplay(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        Text(
-                          '₹${item['price']?.toString() ?? '0'}',
-                          style: GoogleFonts.montserrat(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: AppTheme.primary,
-                          ),
-                        ),
-                      ],
+                  const SizedBox(height: 24),
+                  Text(
+                    'Available Sizes',
+                    style: GoogleFonts.montserrat(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
                     ),
-                    if (sizes.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Expanded(
-                        child: SingleChildScrollView(
-                          child: Wrap(
-                            spacing: 2,
-                            runSpacing: 2,
-                            children: sizes.map((size) {
-                              return Chip(
-                                label: Text(
-                                  '${size['name']} - ₹${size['price']}',
-                                  style: const TextStyle(fontSize: 10),
-                                ),
-                                backgroundColor: Colors.grey.shade100,
-                                padding: EdgeInsets.zero,
-                                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                              );
-                            }).toList(),
-                          ),
-                        ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: sizes.map((size) => ChoiceChip(
+                      label: Text(
+                        '${size['name']} - ₹${size['price']}',
+                        style: GoogleFonts.montserrat(),
                       ),
-                    ],
-                    const SizedBox(height: 4),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 32,
-                      child: ElevatedButton(
-                        onPressed: isAvailable ? () => _addToCart(item) : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.primary,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 0),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        child: Text(
-                          isAvailable ? 'Add to Cart' : 'Not Available',
-                          style: GoogleFonts.montserrat(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                      selected: false,
+                      onSelected: (_) {
+                        Navigator.pop(context);
+                        onAddToCart();
+                      },
+                    )).toList(),
+                  ),
+                ],
               ),
             ),
           ],

@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "../../Backend copy 2"
+		},
+		{
+			"path": ".."
+		}
+	],
+	"settings": {
+		"java.configuration.updateBuildConfiguration": "interactive"
+	}
+}

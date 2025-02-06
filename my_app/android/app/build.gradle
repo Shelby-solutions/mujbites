@@ -1,5 +1,8 @@
 plugins {
-    id "com.android.application" version "8.2.1"
+    id "com.android.application"
+    // START: FlutterFire Configuration
+    id 'com.google.gms.google-services'
+    // END: FlutterFire Configuration version "8.2.1"
     id "kotlin-android"
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id "dev.flutter.flutter-gradle-plugin"
@@ -7,12 +10,13 @@ plugins {
 
 android {
     namespace = "com.mujbites.mujbites"
-    compileSdk = 34
-    ndkVersion = "25.1.8937393"
+    compileSdk = 34  // Fixed value (Flutter default is 34)
+    ndkVersion = "25.1.8937393"  // Correct NDK version as required
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Enable core library desugaring for Java 8+ language features
         coreLibraryDesugaringEnabled true
     }
 
@@ -22,34 +26,42 @@ android {
 
     defaultConfig {
         applicationId = "com.mujbites.mujbites"
-        minSdk = 21
-        targetSdk = 34
+        minSdk = 21  // Ensure minSdk is defined correctly
+        targetSdk = 34  // Ensure targetSdk is set correctly
         versionCode = 1
         versionName = "1.0.0"
-        multiDexEnabled true
     }
 
+    // Place signingConfigs before buildTypes
     signingConfigs {
         release {
-            storeFile file("key.jks")
-            storePassword "Camila@19"
+            storeFile file("./key.jks")  // Path to your keystore file (inside android/app/)
+            storePassword "Camila@19"     // Replace with your actual password (or use a secure method)
             keyAlias "key"
-            keyPassword "Camila@19"
+            keyPassword "Camila@19"       // Replace with your actual password (or use a secure method)
         }
     }
 
     buildTypes {
         release {
-            signingConfig signingConfigs.release
-            minifyEnabled false
-            shrinkResources false
+            signingConfig signingConfigs.release  // Use proper signing for release builds
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+
+            // Specify the APK name
+            applicationVariants.all { variant ->
+                variant.outputs.all {
+                    if (variant.buildType.name == "release") {
+                        outputFileName = "mujbites.apk"
+                    }
+                }
+            }
         }
     }
 }
 
 dependencies {
-    implementation "androidx.multidex:multidex:2.0.1"
-    implementation "androidx.core:core-ktx:1.12.0"
+    // Add the desugaring library dependency. Use the latest version available.
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.3'
 }
 

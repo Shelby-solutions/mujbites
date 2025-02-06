@@ -2,16 +2,6 @@ const express = require('express');
 const axios = require('axios');
 const router = express.Router();
 
-// Recaptcha verification endpoint
-router.post('/verify', async (req, res) => {
-  try {
-    // Your recaptcha verification logic here
-    res.json({ success: true });
-  } catch (error) {
-    res.status(400).json({ success: false, error: error.message });
-  }
-});
-
 // Endpoint to verify reCAPTCHA
 router.post('/verify-recaptcha', async (req, res) => {
   const { recaptchaToken } = req.body;

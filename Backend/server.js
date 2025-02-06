@@ -1,187 +1,183 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
-const http = require('http');
-const WebSocket = require('ws');
-const portfinder = require('portfinder');
-const { app } = require('./app');
+const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
+const session = require('express-session');
+const auth = require('./middleware/authMiddleware');
+const Cart = require('./models/Cart');
+const recommendationRoutes = require('./routes/recommendationRoutes');
 
-// Configure port
+dotenv.config();
+
+const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Validate port
-if (!PORT) {
-  console.error('Port is not defined');
-  process.exit(1);
-}
+// Updated CORS configuration
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 
-// Create HTTP server with timeout settings
-const server = http.createServer(app);
+// Disable certain Helmet middlewares that might block local development
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+  contentSecurityPolicy: false,
+}));
 
-// Configure server timeouts
-server.timeout = 60000; // 60 seconds timeout
-server.keepAliveTimeout = 30000; // 30 seconds keep-alive
-server.headersTimeout = 35000; // Slightly higher than keepAliveTimeout
+// Request parsing middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Create WebSocket server with improved settings
-const wss = new WebSocket.Server({ 
-  noServer: true,
-  clientTracking: true,
-  maxPayload: 50 * 1024 * 1024, // 50MB max payload
-  perMessageDeflate: {
-    zlibDeflateOptions: {
-      chunkSize: 1024,
-      memLevel: 7,
-      level: 3
-    },
-    serverNoContextTakeover: true,
-    clientNoContextTakeover: true,
-    concurrencyLimit: 10,
-    threshold: 1024
-  }
-});
+// Logging middleware
+app.use(morgan('dev'));
 
-// Store connected clients
-const clients = new Map();
-
-// Heartbeat function
-function heartbeat() {
-  this.isAlive = true;
-}
-
-// WebSocket connection handling
-wss.on('connection', (ws, req) => {
-  try {
-    const url = new URL(req.url, `ws://${req.headers.host}`);
-    const userId = url.searchParams.get('userId');
-    const restaurantId = url.searchParams.get('restaurantId');
-    const token = url.searchParams.get('token');
-
-    if (!userId || !restaurantId || !token) {
-      console.log('Invalid connection attempt - missing parameters');
-      ws.close();
-      return;
+// Session middleware
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || 'your-secret-key',
+    resave: false,
+    saveUninitialized: true,
+    cookie: { 
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 24 * 60 * 60 * 1000 // 24 hours
     }
+  })
+);
 
-    // Check if restaurant is already connected
-    const existingClient = clients.get(restaurantId);
-    if (existingClient) {
-      console.log(`Closing existing connection for restaurant ${restaurantId}`);
-      existingClient.close();
-      clients.delete(restaurantId);
-    }
-
-    // Setup new connection
-    ws.isAlive = true;
-    ws.on('pong', heartbeat);
-    ws.restaurantId = restaurantId;
-    clients.set(restaurantId, ws);
-    
-    console.log(`Restaurant ${restaurantId} connected to WebSocket`);
-    
-    ws.on('close', () => {
-      clients.delete(restaurantId);
-      console.log(`Restaurant ${restaurantId} disconnected from WebSocket`);
-    });
-
-    // Send connection confirmation
-    ws.send(JSON.stringify({
-      type: 'connectionConfirmed',
-      message: 'Successfully connected to WebSocket server'
-    }));
-
-    // Setup message handling
-    ws.on('message', (message) => {
-      try {
-        const data = JSON.parse(message);
-        console.log('Received message:', data);
-        
-        if (data.type === 'ping') {
-          ws.send(JSON.stringify({ type: 'pong' }));
-        }
-      } catch (error) {
-        console.error('Error processing message:', error);
-      }
-    });
-  } catch (error) {
-    console.error('Error in WebSocket connection:', error);
-    ws.close();
-  }
-});
-
-// Implement WebSocket heartbeat
-const interval = setInterval(() => {
-  wss.clients.forEach((ws) => {
-    if (ws.isAlive === false) {
-      console.log('Terminating inactive connection');
-      if (ws.restaurantId) {
-        clients.delete(ws.restaurantId);
-      }
-      return ws.terminate();
-    }
-    ws.isAlive = false;
-    ws.ping();
+// Request logging middleware
+app.use((req, res, next) => {
+  console.log('Request:', {
+    method: req.method,
+    path: req.path,
+    body: req.body,
+    headers: req.headers,
   });
-}, 30000);
-
-wss.on('close', () => {
-  clearInterval(interval);
+  next();
 });
 
-// Handle WebSocket upgrade with improved error handling
-server.on('upgrade', (request, socket, head) => {
+// MongoDB connection
+const mongoURI = process.env.MONGODB_URI || process.env.MONGO_URI;
+
+mongoose
+  .connect(mongoURI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(() => {
+    console.log('MongoDB connected successfully');
+  })
+  .catch((err) => {
+    console.error('MongoDB connection error:', err);
+    process.exit(1);
+  });
+
+// Import routes
+const restaurantRoutes = require('./routes/restaurantRoutes');
+const userRoutes = require('./routes/userRoutes');
+const orderRoutes = require('./routes/orders');
+const recaptchaRouter = require('./routes/recaptchaRouter');
+
+// Move cart routes to a separate file
+const cartRoutes = express.Router();
+
+cartRoutes.post('/add', auth, async (req, res) => {
   try {
-    const url = new URL(request.url, `ws://${request.headers.host}`);
-    const token = url.searchParams.get('token');
-    
-    if (!token) {
-      console.log('WebSocket upgrade rejected: Missing token');
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-      socket.destroy();
-      return;
+    const { restaurantId, itemId, quantity, size } = req.body;
+    const userId = req.user.id;
+
+    let cart = await Cart.findOne({ user: userId });
+    if (!cart) {
+      cart = new Cart({ user: userId, items: [] });
     }
 
-    // Set socket timeout
-    socket.setTimeout(30000);
-    socket.setKeepAlive(true, 30000);
+    const itemIndex = cart.items.findIndex(item => 
+      item.item.toString() === itemId && 
+      (!size || item.size === size)
+    );
 
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit('connection', ws, request);
-    });
-  } catch (error) {
-    console.error('Error during WebSocket upgrade:', error);
-    socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
-    socket.destroy();
+    if (itemIndex > -1) {
+      cart.items[itemIndex].quantity += quantity;
+    } else {
+      cart.items.push({
+        item: itemId,
+        quantity,
+        size,
+        restaurant: restaurantId
+      });
+    }
+
+    await cart.save();
+    res.json(cart);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 
-// Start server
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server is running on port ${PORT}`);
+cartRoutes.get('/', auth, async (req, res) => {
+  try {
+    const cart = await Cart.findOne({ user: req.user.id })
+      .populate('items.item')
+      .populate('items.restaurant');
+    res.json(cart || { items: [] });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 });
 
-// Define notifyRestaurant function
-const notifyRestaurant = (restaurantId, orderData) => {
+// API routes
+app.use('/api/restaurants', restaurantRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api/users', recaptchaRouter);
+app.use('/api/cart', cartRoutes);
+app.use('/api/recommendations', recommendationRoutes);
+
+// Health check route
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'OK', timestamp: new Date() });
+});
+
+// 404 Route Not Found
+app.use((req, res) => {
+  res.status(404).json({ 
+    message: 'Route not found',
+    path: req.originalUrl 
+  });
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Error details:', {
+    message: err.message,
+    stack: err.stack,
+    error: err,
+  });
+  
+  res.status(err.statusCode || 500).json({
+    message: err.message || 'Internal server error',
+    error: process.env.NODE_ENV === 'development' ? err : undefined
+  });
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
   try {
-    const ws = clients.get(restaurantId);
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'newOrder',
-        order: orderData
-      }));
-      console.log(`Order notification sent to restaurant ${restaurantId}`);
-      return true;
-    }
-    console.log(`Restaurant ${restaurantId} not connected to WebSocket`);
-    return false;
-  } catch (error) {
-    console.error('Error sending notification:', error);
-    return false;
+    await mongoose.connection.close();
+    console.log('MongoDB connection closed due to app termination');
+    process.exit(0);
+  } catch (err) {
+    console.error('Error closing MongoDB connection:', err);
+    process.exit(1);
   }
-};
+});
 
-// Make notifyRestaurant available globally
-global.notifyRestaurant = notifyRestaurant;
-
-// Export server and notifyRestaurant
-module.exports = { server, notifyRestaurant };
+// Start the server
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+});

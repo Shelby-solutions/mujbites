@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'dart:io' show Platform;  // Add this import
 import 'screens/login_screen.dart';
 import 'screens/signup_screen.dart';
 import 'screens/home_screen.dart';
@@ -8,57 +6,42 @@ import 'screens/profile_screen.dart';
 import 'screens/orders_screen.dart';
 import 'screens/restaurant_screen.dart';
 import 'screens/restaurant_panel_screen.dart';
+import 'screens/recommendations_screen.dart';
 import 'theme/app_theme.dart';
 import 'package:provider/provider.dart';
 import 'providers/cart_provider.dart';
-import 'providers/auth_provider.dart';  // Add this import
 import 'package:shared_preferences/shared_preferences.dart';
 import 'widgets/custom_navbar.dart';
 import 'services/user_preferences.dart';
-import 'services/notification_service.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'services/websocket_service.dart';
-
-// Add this global variable at the top level
-final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';  // This was auto-generated
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final prefs = await SharedPreferences.getInstance();
+  final isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
+  final token = prefs.getString('token');
   
-  // Initialize notification service
-  final notificationService = NotificationService();
-  await notificationService.initialize();
+  // Initialize Firebase
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   
-  // Initialize WebSocket service for restaurants
-  final webSocketService = WebSocketService();
-  await webSocketService.connect();
-  
-  // Ensure notification permissions are requested
-  if (!kIsWeb && Platform.isIOS) {
-    await flutterLocalNotificationsPlugin
-        .resolvePlatformSpecificImplementation<
-            IOSFlutterLocalNotificationsPlugin>()
-        ?.requestPermissions(
-          alert: true,
-          badge: true,
-          sound: true,
-          critical: true,
-        );
-  }
-  
+  await UserPreferences.init();
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => CartProvider()),
-        ChangeNotifierProvider(create: (_) => AuthProvider()),
       ],
-      child: const MyApp(),
+      child: MyApp(initialRoute: isLoggedIn && token != null ? '/home' : '/login'),
     ),
   );
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  final String initialRoute;
+  
+  const MyApp({super.key, required this.initialRoute});
 
   @override
   Widget build(BuildContext context) {
@@ -83,7 +66,7 @@ class MyApp extends StatelessWidget {
           ),
         ),
       ),
-      initialRoute: '/login',
+      initialRoute: initialRoute,
       routes: {
         '/': (context) => const HomeScreen(),
         '/home': (context) => const HomeScreen(),
@@ -92,8 +75,10 @@ class MyApp extends StatelessWidget {
         '/profile': (context) => const ProfileScreen(),
         '/orders': (context) => const OrdersScreen(),
         '/restaurant-panel': (context) => const RestaurantPanelScreen(),
+        '/recommendations': (context) => const RecommendationsScreen(),
       },
       onGenerateRoute: (settings) {
+        // Handle dynamic routes
         if (settings.name?.startsWith('/restaurant/') ?? false) {
           final restaurantId = settings.name!.split('/').last;
           return MaterialPageRoute(

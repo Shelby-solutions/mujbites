@@ -19,7 +19,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.6.1
+  sdk: '>=3.0.0 <4.0.0'
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -33,20 +33,26 @@ dependencies:
   http: ^1.1.0
   shared_preferences: ^2.2.2
   provider: ^6.1.1
-  flutter_staggered_animations: ^1.1.1
+  dio: ^5.0.0
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
-  web_socket_channel: ^2.4.0
-  flutter_local_notifications: ^16.3.0  # Add this line
-  google_fonts: ^6.2.1
+  cupertino_icons: ^1.0.2
+  web_socket_channel: ^3.0.2
+  flutter_local_notifications: ^18.0.1
+  google_fonts: ^6.1.0
   animated_text_kit: ^4.2.2
   shimmer: ^3.0.0
-  lottie: ^3.0.0  # Updated version
+  lottie: ^2.7.0
   glassmorphism: ^3.0.0
   rive: ^0.12.4
   permission_handler: ^11.3.1
   url_launcher: ^6.3.1
+  firebase_core: ^2.25.5
+  firebase_messaging: ^14.7.17
+  firebase_messaging_web: ^3.6.5
+  js: ^0.6.7
+  intl: ^0.20.2
 
 dev_dependencies:
   flutter_test:
@@ -57,7 +63,7 @@ dev_dependencies:
   # activated in the `analysis_options.yaml` file located at the root of your
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
-  flutter_lints: ^5.0.0
+  flutter_lints: ^2.0.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -72,15 +78,22 @@ flutter:
 
   assets:
     - assets/images/
-    - assets/images/placeholder.jpg
+    - assets/animations/
+    - assets/animations/happy.json
+    - assets/animations/stressed.json
+    - assets/animations/tired.json
+    - assets/animations/healthy.json
+    - assets/animations/adventurous.json
+    - assets/animations/indecisive.json
+    - assets/images/placeholder.png
 
   fonts:
-    - family: Poppins
+    - family: Montserrat
       fonts:
-        - asset: assets/fonts/Poppins-Regular.ttf
-        - asset: assets/fonts/Poppins-Bold.ttf
+        - asset: assets/fonts/Montserrat-Regular.ttf
+        - asset: assets/fonts/Montserrat-Bold.ttf
           weight: 700
-    
+
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
 

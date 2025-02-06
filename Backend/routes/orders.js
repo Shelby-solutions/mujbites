@@ -5,42 +5,61 @@ const Restaurant = require("../models/restaurantModel");
 const authenticateToken = require("../middleware/authMiddleware");
 
 // POST /api/orders - Place a new order
-// Update the POST route
 router.post("/", authenticateToken, async (req, res) => {
   try {
     const { restaurant, restaurantName, items, totalAmount, address } = req.body;
-    const customer = req.user.userId;
+    const customer = req.user.userId; // Get the user ID from the token
 
     // Input Validation
-    if (!restaurant || !items || !totalAmount || !address) {
-      return res.status(400).json({ message: "Missing required fields" });
+    if (!restaurant) {
+      return res.status(400).json({ message: "Restaurant ID is required." });
+    }
+    if (!restaurantName) {
+      return res.status(400).json({ message: "Restaurant name is required." });
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: "Order items are required." });
+    }
+    if (!totalAmount || totalAmount <= 0) {
+      return res.status(400).json({ message: "Valid total amount is required." });
+    }
+    if (!address) {
+      return res.status(400).json({ message: "Delivery address is required." });
     }
 
-    // Create order
+    // Validate each item in the order
+    const validatedItems = items.map((item) => {
+      if (!item.menuItem || !item.itemName || !item.quantity) {
+        throw new Error("Each item must include menuItem, itemName, and quantity.");
+      }
+      return {
+        menuItem: item.menuItem,
+        itemName: item.itemName, // Include itemName
+        quantity: item.quantity,
+        size: item.size || "Regular", // Default size if not provided
+      };
+    });
+
+    // Create a new order
     const order = new Order({
       restaurant,
-      restaurantName,
+      restaurantName, // Include restaurantName
       customer,
-      items,
+      items: validatedItems, // Use the validated items
       totalAmount,
       address,
-      orderStatus: "Placed"
+      orderStatus: "Placed", // Updated to match schema
     });
 
     await order.save();
 
-    // Notify restaurant using global function
-    if (global.notifyRestaurant) {
-      global.notifyRestaurant(restaurant, order);
-    }
-
-    res.status(201).json({
-      message: 'Order placed successfully',
-      order: order
-    });
+    res.status(201).json({ message: "Order placed successfully.", order });
   } catch (error) {
-    console.error("Error placing order:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    console.error("Error placing order:", {
+      error: error.message,
+      stack: error.stack,
+    });
+    res.status(500).json({ message: "Server error.", error: error.message });
   }
 });
 

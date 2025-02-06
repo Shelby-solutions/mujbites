@@ -1,53 +1,66 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
-import 'package:google_fonts/google_fonts.dart';
-import '../providers/cart_provider.dart';
-import 'package:provider/provider.dart';
 
 class CartButton extends StatelessWidget {
-  final VoidCallback onTap;
+  final int itemCount;
+  final VoidCallback onPressed;
 
-  const CartButton({super.key, required this.onTap});
+  const CartButton({
+    Key? key,
+    required this.itemCount,
+    required this.onPressed,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    // Update the CartButton widget
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Material(
-        elevation: 8,
-        shadowColor: Colors.black.withOpacity(0.2),
-        borderRadius: BorderRadius.circular(30),
-        color: Colors.black,
-        child: InkWell(
-          onTap: onTap,
+    return GestureDetector(
+      onTap: onPressed,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.black87,
           borderRadius: BorderRadius.circular(30),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(
-                  Icons.shopping_cart,
-                  color: Colors.white,
-                  size: 24,
-                ),
-                const SizedBox(width: 8),
-                Consumer<CartProvider>(
-                  builder: (context, cart, child) => Text(
-                    'Cart (${cart.itemCount})',
-                    style: GoogleFonts.montserrat(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
             ),
-          ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.shopping_cart_outlined,
+              color: Colors.white,
+              size: 24,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '$itemCount items',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(
+                Icons.arrow_forward,
+                color: Colors.black87,
+                size: 16,
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
-}
+} 

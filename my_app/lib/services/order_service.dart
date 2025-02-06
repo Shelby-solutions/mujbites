@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/cart.dart';
@@ -15,61 +14,45 @@ class OrderService {
     required String address,
     required String token,
   }) async {
-    int retryCount = 0;
-    const maxRetries = 3;
-    const retryDelay = Duration(seconds: 2);
+    try {
+      print('Sending order request with data:');
+      final orderItems = items.map((item) => {
+        'menuItem': item.id,
+        'itemName': item.name,
+        'quantity': item.quantity,
+        'size': item.size,
+      }).toList();
+      
+      print('Order Items: $orderItems');
 
-    while (retryCount < maxRetries) {
-      try {
-        print('Attempt ${retryCount + 1} of $maxRetries to place order');
-        final orderItems = items.map((item) => {
-          'menuItem': item.id,
-          'itemName': item.name,
-          'quantity': item.quantity,
-          'size': item.size,
-        }).toList();
+      final body = jsonEncode({
+        'restaurant': restaurantId,
+        'restaurantName': restaurantName,
+        'items': orderItems,
+        'totalAmount': totalAmount,
+        'address': address,
+      });
 
-        final body = jsonEncode({
-          'restaurant': restaurantId,
-          'restaurantName': restaurantName,
-          'items': orderItems,
-          'totalAmount': totalAmount,
-          'address': address,
-        });
+      print('Request body: $body');
 
-        final response = await http.post(
-          Uri.parse('$baseUrl/orders'),
-          headers: await ApiService().getHeaders(token),
-          body: body,
-        ).timeout(
-          const Duration(seconds: 30),
-          onTimeout: () {
-            throw TimeoutException('Request timed out. Please try again.');
-          },
-        );
+      final response = await http.post(
+        Uri.parse('$baseUrl/orders'),
+        headers: await ApiService().getHeaders(token),
+        body: body,
+      );
 
-        if (response.statusCode == 201) {
-          print('Order placed successfully');
-          return;
-        } else {
-          final errorMessage = response.body.isNotEmpty
-              ? jsonDecode(response.body)['message']
-              : 'Failed to place order';
-          throw Exception(errorMessage);
-        }
-      } catch (e) {
-        print('Error placing order (Attempt ${retryCount + 1}): $e');
-        if (e is TimeoutException || e.toString().contains('Connection reset')) {
-          if (retryCount < maxRetries - 1) {
-            retryCount++;
-            await Future.delayed(retryDelay);
-            continue;
-          }
-        }
-        throw Exception(e is TimeoutException
-            ? 'Request timed out. Please check your internet connection and try again.'
-            : 'Failed to place order: ${e.toString().replaceAll('Exception:', '')}');
+      print('Response status: ${response.statusCode}');
+      print('Response body: ${response.body}');
+
+      if (response.statusCode != 201) {
+        final errorMessage = response.body.isNotEmpty 
+            ? jsonDecode(response.body)['message'] 
+            : 'Failed to place order';
+        throw Exception(errorMessage);
       }
+    } catch (e) {
+      print('Error placing order: $e');
+      throw Exception('Failed to place order: $e');
     }
   }
 
@@ -108,4 +91,4 @@ class OrderService {
       throw Exception('Failed to update address: $e');
     }
   }
-}
+} 

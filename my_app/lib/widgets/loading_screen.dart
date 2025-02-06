@@ -10,7 +10,7 @@ class LoadingScreen extends StatefulWidget {
   State<LoadingScreen> createState() => _LoadingScreenState();
 }
 
-class _LoadingScreenState extends State<LoadingScreen> with TickerProviderStateMixin {
+class _LoadingScreenState extends State<LoadingScreen> with SingleTickerProviderStateMixin {
   String _emoji = '🍳';
   double _emojiSize = 32;
   late Timer _emojiTimer;
@@ -18,47 +18,68 @@ class _LoadingScreenState extends State<LoadingScreen> with TickerProviderStateM
   
   final List<String> _emojis = ['🍳', '✨', '⭐', '🍴', '🍽️'];
   
-  late final AnimationController _bounceController = AnimationController(
-    duration: const Duration(seconds: 1),
-    vsync: this,
-  )..repeat(reverse: true);
-
-  late final Animation<double> _bounceAnimation = CurvedAnimation(
-    parent: _bounceController,
-    curve: Curves.easeInOut,
-  );
+  late AnimationController _controller;
+  late Animation<double> _bounceAnimation;
+  bool _disposed = false;
 
   @override
   void initState() {
     super.initState();
     
-    // Change emoji every 2 seconds
+    _controller = AnimationController(
+      duration: const Duration(seconds: 1),
+      vsync: this,
+    );
+
+    _bounceAnimation = CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeInOut,
+    );
+
+    // Start repeating animation
+    _startAnimation();
+    _setupTimers();
+  }
+
+  void _startAnimation() {
+    if (_disposed) return;
+    _controller.forward().then((_) {
+      if (_disposed) return;
+      _controller.reverse().then((_) {
+        if (_disposed) return;
+        _startAnimation();
+      });
+    });
+  }
+
+  void _setupTimers() {
     _emojiTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (!mounted || _disposed) return;
       setState(() {
         _emoji = _emojis[timer.tick % _emojis.length];
       });
     });
     
-    // Pulse size every second
     _sizeTimer = Timer.periodic(const Duration(milliseconds: 1000), (timer) {
+      if (!mounted || _disposed) return;
       setState(() {
         _emojiSize = 40;
       });
       Future.delayed(const Duration(milliseconds: 500), () {
-        if (mounted) {
-          setState(() {
-            _emojiSize = 32;
-          });
-        }
+        if (!mounted || _disposed) return;
+        setState(() {
+          _emojiSize = 32;
+        });
       });
     });
   }
 
   @override
   void dispose() {
+    _disposed = true;
     _emojiTimer.cancel();
     _sizeTimer.cancel();
-    _bounceController.dispose();
+    _controller.dispose();
     super.dispose();
   }
 

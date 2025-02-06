@@ -1,6 +1,7 @@
 const Order = require('../models/orders');
 const Restaurant = require('../models/restaurantModel');
 const { sendOrderNotification } = require('../notifications/orderNotifications');
+const { sendNotificationToRestaurant } = require('../services/firebaseService');
 
 /**
  * @route   POST /api/orders
@@ -47,36 +48,41 @@ const createOrder = async (req, res) => {
 
     // Send notifications
     try {
-      // Get restaurant owner's ID
+      // Notify customer
+      await sendOrderNotification(
+        customer,
+        'ORDER_PLACED',
+        { restaurantName }
+      );
+
+      // Notify restaurant owner
       const restaurantData = await Restaurant.findById(restaurant).populate("owner");
       if (restaurantData?.owner) {
-        // Send WebSocket notification
-        global.io.to(`restaurant_${restaurant}`).emit('newOrder', {
-          type: 'newOrder',
-          order: {
-            _id: order._id,
-            restaurantName,
-            items: validatedItems,
-            totalAmount,
-            orderStatus: "Placed",
-            createdAt: order.createdAt
-          }
-        });
-
-        // Send push notification
         await sendOrderNotification(
           restaurantData.owner._id,
           'NEW_ORDER',
-          {
-            orderId: order._id,
-            restaurantName,
-            amount: totalAmount
-          }
+          { restaurantName }
         );
       }
     } catch (notificationError) {
       console.error('Notification error:', notificationError);
+      // Don't fail the order if notifications fail
     }
+
+    // Send notification to restaurant
+    await sendNotificationToRestaurant(
+      order.restaurant,
+      'New Order Received!',
+      `Order #${order._id.toString().slice(-6)}`,
+      {
+        orderId: order._id.toString(),
+        restaurantId: order.restaurant,
+        restaurantName: order.restaurantName,
+        totalAmount: order.totalAmount.toString(),
+        status: order.orderStatus,
+        type: 'new_order'
+      }
+    );
 
     res.status(201).json({
       message: "Order placed successfully",
@@ -187,6 +193,19 @@ const confirmOrder = async (req, res) => {
       console.error("Error sending notification:", error);
     }
 
+    // Send notification to restaurant
+    await sendNotificationToRestaurant(
+      order.restaurant,
+      'Order Accepted',
+      `Order #${order._id.toString().slice(-6)} has been accepted`,
+      {
+        orderId: order._id.toString(),
+        restaurantId: order.restaurant,
+        status: 'Accepted',
+        type: 'order_status_update'
+      }
+    );
+
     res.status(200).json({ message: "Order confirmed successfully.", order });
   } catch (error) {
     console.error("Error confirming order:", {
@@ -232,6 +251,19 @@ const deliverOrder = async (req, res) => {
     } catch (error) {
       console.error("Error sending notification:", error);
     }
+
+    // Send notification to restaurant
+    await sendNotificationToRestaurant(
+      order.restaurant,
+      'Order Delivered',
+      `Order #${order._id.toString().slice(-6)} has been delivered`,
+      {
+        orderId: order._id.toString(),
+        restaurantId: order.restaurant,
+        status: 'Delivered',
+        type: 'order_status_update'
+      }
+    );
 
     res.status(200).json({ message: "Order marked as delivered.", order });
   } catch (error) {

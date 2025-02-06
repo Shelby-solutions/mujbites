@@ -1,17 +1,16 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';  // Add this import for TimeoutException
-import 'dart:math' as math;  // Add math library import
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:my_app/services/user_preferences.dart';
+import 'package:dio/dio.dart';  // Add this import at the top
 
-class ApiService {  static const bool useProductionUrl = true;
-  static const int connectionTimeout = 30; // Increased timeout for slower connections
-  static const int maxRetries = 5;
-  static const Duration initialRetryDelay = Duration(seconds: 2); // Increased initial retry delay
-  static const Duration maxRetryDelay = Duration(seconds: 10); // Maximum retry delay
+class ApiService {
+  static const bool useProductionUrl = false; // Toggle this for development/production
+
+  final Dio _dio = Dio(BaseOptions(baseUrl: baseUrl));
 
   static String get baseUrl {
     if (useProductionUrl) {
@@ -21,9 +20,11 @@ class ApiService {  static const bool useProductionUrl = true;
     if (kIsWeb) {
       return 'http://localhost:5000/api';
     }
+
+    // For mobile platforms
     return Platform.isAndroid 
-        ? 'http://10.0.2.2:5000/api'  // Android emulator uses 10.0.2.2 to access localhost
-        : 'http://localhost:5000/api'; // iOS simulator or web
+        ? 'http://10.0.2.2:5000/api'  // Android emulator localhost
+        : 'http://localhost:5000/api'; // iOS simulator
   }
   
   // For debugging
@@ -39,8 +40,7 @@ class ApiService {  static const bool useProductionUrl = true;
     }
     return {
       'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
+      'Authorization': token != null ? 'Bearer $token' : '',
     };
   }
 
@@ -48,77 +48,35 @@ class ApiService {  static const bool useProductionUrl = true;
     String method = 'GET',
     Map<String, dynamic>? body,
   }) async {
-    int retryCount = 0;
-    Duration timeout = Duration(seconds: connectionTimeout);
-    Duration retryDelay = const Duration(seconds: 2);
-
-    while (retryCount < maxRetries) {
-      try {
-        final headers = await getHeaders();
-        final uri = getUri(path);
-        
-        http.Response response;
-        
-        switch (method) {
-          case 'GET':
-            response = await http.get(uri, headers: headers).timeout(timeout);
-            break;
-          case 'POST':
-            response = await http.post(uri, headers: headers, body: jsonEncode(body)).timeout(timeout);
-            break;
-          case 'PUT':
-            response = await http.put(uri, headers: headers, body: jsonEncode(body)).timeout(timeout);
-            break;
-          default:
-            throw Exception('Unsupported method: $method');
-        }
-
-        if (response.statusCode == 200 || response.statusCode == 201) {
-          return jsonDecode(response.body);
-        } else if (response.statusCode == 401) {
-          throw Exception('Unauthorized access. Please login again.');
-        } else if (response.statusCode == 500) {
-          final errorData = jsonDecode(response.body);
-          if (errorData['error']?.toString().contains('timed out') == true) {
-            if (retryCount < maxRetries - 1) {
-              retryCount++;
-              await Future.delayed(Duration(seconds: 2 * (1 << retryCount)));
-              continue;
-            }
-            throw TimeoutException('Server is currently busy. Please try again in a few moments.');
-          }
-          throw Exception(errorData['message'] ?? 'An error occurred on the server.');
-        } else {
-          throw Exception('Request failed with status: ${response.statusCode}');
-        }
-      } on TimeoutException catch (_) {
-        if (retryCount < maxRetries - 1) {
-          retryCount++;
-          print('Request timed out. Retrying (${retryCount}/${maxRetries})');
-          // Implement exponential backoff with jitter
-          final backoffMs = math.min(1000 * (1 << retryCount), 10000);
-          final jitter = math.Random().nextInt(1000);
-          await Future.delayed(Duration(milliseconds: backoffMs + jitter));
-          continue;
-        }
-        throw Exception('Connection timed out. Please check your internet connection and try again.');
-      } on SocketException catch (e) {
-        print('Network error: $e');
-        if (retryCount < maxRetries - 1) {
-          retryCount++;
-          print('Network error. Retrying (${retryCount}/${maxRetries})');
-          await Future.delayed(Duration(seconds: math.min(2 * (1 << retryCount), 10)));
-          continue;
-        }
-        throw Exception('Unable to connect to the server. Please check your internet connection.');
-      } on FormatException catch (_) {
-        throw Exception('Received invalid response from server.');
-      } catch (e) {
-        print('API request error: $e');
-        rethrow;
+    try {
+      final headers = await getHeaders();
+      final uri = getUri(path);
+      
+      http.Response response;
+      
+      switch (method) {
+        case 'GET':
+          response = await http.get(uri, headers: headers);
+          break;
+        case 'POST':
+          response = await http.post(uri, headers: headers, body: jsonEncode(body));
+          break;
+        case 'PUT':
+          response = await http.put(uri, headers: headers, body: jsonEncode(body));
+          break;
+        default:
+          throw Exception('Unsupported method: $method');
       }
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Request failed with status: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('API request error: $e');
+      rethrow;
     }
-    throw Exception('Request failed after multiple attempts. Please try again later.');
   }
 
   // Authentication Methods
@@ -155,59 +113,33 @@ class ApiService {  static const bool useProductionUrl = true;
     }
   }
 
-  Future<Map<String, dynamic>> login(String identifier, String password) async {
-    int retryCount = 0;
-    Duration retryDelay = initialRetryDelay;
+  Future<Map<String, dynamic>> login(String mobileNumber, String password) async {
+    try {
+      print('\n=== API Login Request ===');
+      print('Mobile: $mobileNumber');
+      
+      final response = await http.post(
+        getUri('/users/login'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'mobileNumber': mobileNumber,
+          'password': password,
+        }),
+      );
 
-    while (retryCount < maxRetries) {
-      try {
-        print('\n=== Login Attempt ${retryCount + 1}/${maxRetries} ===');
-        print('Timeout set to: ${connectionTimeout} seconds');
+      print('Response status: ${response.statusCode}');
+      final responseData = jsonDecode(response.body);
+      print('Response data: $responseData');
 
-        final response = await http.post(
-          getUri('/users/login'),
-          headers: await getHeaders(),
-          body: jsonEncode({
-            'identifier': identifier,
-            'password': password,
-          }),
-        ).timeout(Duration(seconds: connectionTimeout));
-
-        // Reset connection state tracking
-        if (response.statusCode == 200 || response.statusCode == 201) {
-          await UserPreferences.setBool('isLoggedIn', true);
-        }
-
-        print('Response status: ${response.statusCode}');
-        final responseData = jsonDecode(response.body);
-
-        if (response.statusCode == 200 || response.statusCode == 201) {
-          print('Login successful');
-          return responseData;
-        } else {
-          print('Login failed with status: ${response.statusCode}');
-          print('Response body: ${response.body}');
-          throw Exception(responseData['message'] ?? 'Login failed');
-        }
-      } on TimeoutException catch (_) {
-        print('Request timed out (attempt ${retryCount + 1})');
-        if (retryCount >= maxRetries - 1) {
-          throw Exception('Connection timed out. Please check your internet connection.');
-        }
-        retryCount++;
-        await Future.delayed(Duration(seconds: math.min(2 * (1 << retryCount), 10)));
-      } on SocketException catch (e) {
-        print('Network error: $e');
-        throw Exception('Network error. Please check your internet connection.');
-      } on FormatException catch (e) {
-        print('Invalid response format: $e');
-        throw Exception('Server returned an invalid response. Please try again.');
-      } catch (e) {
-        print('Login error: $e');
-        throw Exception('An unexpected error occurred. Please try again.');
+      if (response.statusCode == 200) {
+        return responseData;
+      } else {
+        throw Exception('Login failed');
       }
+    } catch (e) {
+      print('Login error: $e');
+      rethrow;
     }
-    throw Exception('Login failed after ${maxRetries} attempts. Please try again later.');
   }
 
   // Restaurant Methods
@@ -281,27 +213,17 @@ class ApiService {  static const bool useProductionUrl = true;
   }
 
   // Order Methods
-  // Update the createOrder method
   Future<Map<String, dynamic>> createOrder(Map<String, dynamic> orderData) async {
-    try {
-      print('Creating order with data: $orderData');
-      final response = await http.post(
-        getUri('/orders'), // Changed from /api/orders to /orders
-        headers: await getHeaders(),
-        body: jsonEncode(orderData),
-      );
-  
-      print('Order creation response: ${response.statusCode}');
-      print('Response body: ${response.body}');
-  
-      if (response.statusCode == 201) {
-        return jsonDecode(response.body);
-      } else {
-        throw Exception('Failed to create order: ${response.statusCode}\n${response.body}');
-      }
-    } catch (e) {
-      print('Error creating order: $e');
-      rethrow;
+    final response = await http.post(
+      Uri.parse('$baseUrl/orders'),
+      headers: await getHeaders(),
+      body: jsonEncode(orderData),
+    );
+
+    if (response.statusCode == 201) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Failed to create order');
     }
   }
 
@@ -666,18 +588,80 @@ class ApiService {  static const bool useProductionUrl = true;
     }
   }
 
-  Future<void> _saveUserData(Map<String, dynamic> response) async {
+  // Recommendations Methods
+  Future<Map<String, dynamic>> testRecommendationsRoute() async {
     try {
-      final user = response['user'] as Map<String, dynamic>;
-      await UserPreferences.saveUserData(
-        userId: user['_id'].toString(),
-        token: response['token'],
-        role: user['role'],
-        restaurantData: user['restaurant'],
-      );
+      print('\n=== Testing Recommendations Route ===');
+      
+      // Test the ping endpoint (no auth required)
+      final pingUri = getUri('/recommendations/ping');
+      print('Testing ping endpoint: $pingUri');
+      
+      final pingResponse = await http.get(pingUri);
+      print('Ping response status: ${pingResponse.statusCode}');
+      print('Ping response body: ${pingResponse.body}');
+      
+      // Test the test endpoint (no auth required)
+      final testUri = getUri('/recommendations/test');
+      print('Testing test endpoint: $testUri');
+      
+      final testResponse = await http.get(testUri);
+      print('Test response status: ${testResponse.statusCode}');
+      print('Test response body: ${testResponse.body}');
+      
+      return {
+        'ping': jsonDecode(pingResponse.body),
+        'test': jsonDecode(testResponse.body)
+      };
     } catch (e) {
-      print('Error saving user data: $e');
-      await UserPreferences.clear();
+      print('Error testing recommendations route: $e');
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> getRecommendations({String? mood}) async {
+    try {
+      print('\n=== Getting Recommendations ===');
+      
+      // Get the token
+      final token = await UserPreferences.getToken();
+      if (token == null) {
+        throw Exception('Not authenticated');
+      }
+
+      // Prepare headers
+      final headers = {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      };
+
+      // Build the URI with query parameters if mood is provided
+      final uri = mood != null 
+        ? getUri('/recommendations').replace(queryParameters: {'mood': mood})
+        : getUri('/recommendations');
+      
+      print('Request URI: $uri');
+      print('Headers: $headers');
+
+      final response = await http.get(
+        uri,
+        headers: headers,
+      ).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => throw TimeoutException('Request timed out'),
+      );
+
+      print('Response status: ${response.statusCode}');
+      print('Response body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data;
+      }
+      
+      throw Exception('Failed to get recommendations: ${response.statusCode}');
+    } catch (e) {
+      print('Error getting recommendations: $e');
       rethrow;
     }
   }

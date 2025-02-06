@@ -11,10 +11,7 @@ class CartProvider with ChangeNotifier {
     return _items.fold(0, (sum, item) => sum + (item.price * item.quantity));
   }
 
-  // Add this getter
-  int get itemCount {
-    return _items.length;
-  }
+  int get itemCount => _items.length;
 
   void addItem(CartItem item) {
     // Check if adding from a different restaurant
@@ -29,7 +26,14 @@ class CartProvider with ChangeNotifier {
     if (existingIndex >= 0) {
       _items[existingIndex].quantity += 1;
     } else {
-      _items.add(item);
+      _items.add(CartItem(
+        id: item.id,
+        name: item.name,
+        price: item.price,
+        size: item.size,
+        restaurantId: item.restaurantId,
+        restaurantName: item.restaurantName,
+      ));
     }
     
     notifyListeners();
@@ -57,4 +61,4 @@ class CartProvider with ChangeNotifier {
     _currentRestaurantId = null;
     notifyListeners();
   }
-}
+} 

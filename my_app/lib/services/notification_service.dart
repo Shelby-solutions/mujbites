@@ -9,369 +9,293 @@ import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
-import '../services/user_preferences.dart';
-import 'dart:math' as math;  // Add this import
-
-// Add this at the very top of the file, before the class definition
-@pragma('vm:entry-point')
-void notificationTapBackground(NotificationResponse notificationResponse) {
-  print('Handling background notification tap: ${notificationResponse.payload}');
-  // Add any background handling logic here
-}
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._internal();
   factory NotificationService() => _instance;
   NotificationService._internal();
 
-  // Add this field
-  bool _isConnected = false;
-  
   WebSocketChannel? _channel;
   final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
   Function(Map<String, dynamic>)? onNewOrder;
   bool _isInitialized = false;
+  FirebaseMessaging? _firebaseMessaging;
 
   Future<void> initialize() async {
     if (_isInitialized) return;
 
-    try {
-      // Request permissions first
-      await _requestBackgroundPermissions();  // Add this line
-      
-      if (Platform.isIOS) {
-        await _notifications
-            .resolvePlatformSpecificImplementation<
-                IOSFlutterLocalNotificationsPlugin>()
-            ?.requestPermissions(
-              alert: true,
-              badge: true,
-              sound: true,
-              critical: true,
-            );
-      }
+    await Firebase.initializeApp();
+    _firebaseMessaging = FirebaseMessaging.instance;
 
-      // Initialize notifications
-      await _notifications.initialize(
-        InitializationSettings(
-          android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-          iOS: DarwinInitializationSettings(
-            requestAlertPermission: true,
-            requestBadgePermission: true,
-            requestSoundPermission: true,
-          ),
-        ),
-        onDidReceiveNotificationResponse: _handleNotificationResponse,
-        onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
+    // Request permissions with proper handling for both platforms
+    await _requestNotificationPermissions();
+    await _configureNotificationChannels();
+
+    // Get FCM token and print it for debugging
+    final token = await _firebaseMessaging?.getToken();
+    print('FCM Token: $token');
+
+    // Configure message handling
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
+    FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationTap);
+
+    // Handle initial message when app is launched from terminated state
+    final initialMessage = await FirebaseMessaging.instance.getInitialMessage();
+    if (initialMessage != null) {
+      _handleNotificationTap(initialMessage);
+    }
+
+    _isInitialized = true;
+  }
+
+  Future<void> _requestNotificationPermissions() async {
+    if (!kIsWeb) {
+      if (Platform.isIOS) {
+        // iOS-specific settings
+        await _firebaseMessaging?.requestPermission(
+          alert: true,
+          badge: true,
+          sound: true,
+          provisional: false,
+          criticalAlert: true,
+          announcement: true,
+          carPlay: true,
+        );
+
+        // Enable foreground notifications for iOS
+        await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
+          alert: true,
+          badge: true,
+          sound: true,
+        );
+      } else if (Platform.isAndroid) {
+        // Android-specific settings
+        final status = await ph.Permission.notification.request();
+        if (status.isGranted) {
+          print('Android notification permission granted');
+        } else {
+          print('Android notification permission denied');
+        }
+      }
+    }
+  }
+
+  Future<void> _configureNotificationChannels() async {
+    if (Platform.isAndroid) {
+      const androidChannel = AndroidNotificationChannel(
+        'restaurant_orders',
+        'Restaurant Orders',
+        description: 'Notifications for new restaurant orders',
+        importance: Importance.max,
+        playSound: true,
+        enableVibration: true,
+        showBadge: true,
       );
 
-      // Connect to WebSocket for real-time notifications
-      await connectToWebSocket();
+      await _notifications
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(androidChannel);
+    } else if (Platform.isIOS) {
+      // Configure iOS notification categories
+      final DarwinNotificationDetails iOSPlatformChannelSpecifics = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+        sound: 'default',
+        badgeNumber: 1,
+        categoryIdentifier: 'restaurant_orders',
+        threadIdentifier: 'restaurant_orders',
+      );
       
-      _isInitialized = true;
-    } catch (e) {
-      print('Error initializing notification service: $e');
+      // Register the iOS category
+      await _notifications
+          .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
+          ?.requestPermissions(
+            alert: true,
+            badge: true,
+            sound: true,
+            critical: true,
+          );
     }
   }
 
-  void _handleNotificationResponse(NotificationResponse details) {
-    print('Handling notification response: ${details.payload}');
-    if (details.payload != null) {
-      try {
-        final data = jsonDecode(details.payload!);
-        if (data['orderData'] != null) {
-          onNewOrder?.call(data['orderData']);
-        }
-      } catch (e) {
-        print('Error processing notification payload: $e');
-      }
+  Future<void> subscribeToRestaurantOrders(String restaurantId) async {
+    await _firebaseMessaging?.subscribeToTopic('restaurant_$restaurantId');
+    print('Subscribed to notifications for restaurant: $restaurantId');
+  }
+
+  Future<void> unsubscribeFromRestaurantOrders(String restaurantId) async {
+    await _firebaseMessaging?.unsubscribeFromTopic('restaurant_$restaurantId');
+    print('Unsubscribed from notifications for restaurant: $restaurantId');
+  }
+
+  Future<String?> getDeviceToken() async {
+    return await _firebaseMessaging?.getToken();
+  }
+
+  void _handleForegroundMessage(RemoteMessage message) {
+    print('Received foreground message: ${message.data}');
+    
+    final type = message.data['type'];
+    switch(type) {
+      case 'new_order':
+        _showNotification(
+          message.notification?.title ?? 'New Order',
+          message.notification?.body ?? 'You have received a new order',
+          payload: message.data
+        );
+        break;
+      case 'order_status_update':
+        _showNotification(
+          message.notification?.title ?? 'Order Update',
+          message.notification?.body ?? 'Your order status has been updated',
+          payload: message.data
+        );
+        break;
+    }
+    
+    // Call the callback if set
+    onNewOrder?.call(message.data);
+  }
+
+  void _handleNotificationTap(RemoteMessage message) {
+    print('Notification tapped: ${message.data}');
+    
+    final type = message.data['type'];
+    final orderId = message.data['orderId'];
+    final restaurantId = message.data['restaurantId'];
+    
+    // Handle navigation based on notification type
+    if (type == 'new_order' || type == 'order_status_update') {
+      onNewOrder?.call(message.data);
     }
   }
 
-  // Add this at the top level of the file, outside the class
-  @pragma('vm:entry-point')
-  void notificationTapBackground(NotificationResponse details) {
-    print('Handling background notification tap: ${details.payload}');
-    // Handle background notification tap
-  }
-
-  Future<void> _requestBackgroundPermissions() async {
-    if (Platform.isAndroid) {
-      await ph.Permission.notification.request();
-      // Request background running permission
-      await ph.Permission.ignoreBatteryOptimizations.request();
-    }
-  }
-
-  // Update in _setupBackgroundHandler
-  void _setupBackgroundHandler() {
-    _channel?.stream.listen(
-      (message) async {
-        try {
-          final data = jsonDecode(message);
-          print('Received WebSocket message: $data');
-          
-          if (data['type'] == 'newOrder') {
-            await _processNewOrder(data['order']);
-          } else if (data['type'] == 'orderStatus') {
-            // Handle order status updates if needed
-            print('Received order status update: ${data['status']}');
-          }
-        } catch (e) {
-          print('Error processing WebSocket message: $e');
-        }
-      },
-      onError: (error) {
-        print('WebSocket error: $error');
-        _isConnected = false;
-        _handleConnectionError();
-      },
-      onDone: () {
-        print('WebSocket connection closed');
-        _isConnected = false;
-        _handleConnectionError();
-      },
-    );
-  }
-
-  // Remove this duplicate implementation
-  void _handleNewOrder(Map<String, dynamic> orderData) async {
-    await showOrderNotification(
-      'New Order Received!',
-      'Order #${orderData['_id'].toString().substring(orderData['_id'].toString().length - 6)}',
-      data: {'orderData': orderData}, // Changed 'payload' to 'data'
-    );
-    onNewOrder?.call(orderData);
-  }
-
-  Future<void> showOrderNotification(String title, String message, {Map<String, dynamic>? data}) async {
-    const androidDetails = AndroidNotificationDetails(
-      'restaurant_orders',
-      'Restaurant Orders',
-      channelDescription: 'Notifications for new restaurant orders',
-      importance: Importance.high,
-      priority: Priority.high,
-      enableVibration: true,
-    );
-    
-    const iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-    
-    const details = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
-    
-    await _notifications.show(
-      DateTime.now().millisecondsSinceEpoch.toInt(),
-      title,
-      message,
-      details,
-      payload: data != null ? jsonEncode(data) : null,
-    );
-  }
-
-  // Add connection state management
-  bool _isConnecting = false;
-  bool _shouldReconnect = true;
-  Timer? _reconnectTimer;
-  int _reconnectAttempts = 0;
-  static const int maxReconnectAttempts = 5;
-
-  // Update the _wsUrl getter
   String get _wsUrl {
-    const baseUrl = 'mujbites-app.onrender.com';
-    return 'wss://$baseUrl/ws';  // Remove /api prefix as it's not in the backend route
+    if (kIsWeb) {
+      return 'ws://localhost:5000/ws';
+    }
+    return Platform.isAndroid 
+        ? 'ws://10.0.2.2:5000/ws'  // Android emulator
+        : 'ws://localhost:5000/ws'; // iOS simulator or web
   }
 
   Future<void> connectToWebSocket() async {
-    if (_isConnecting || _reconnectAttempts >= maxReconnectAttempts) {
-      print('Skipping connection attempt');
-      return;
-    }
-    
     try {
-      _isConnecting = true;
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('token')?.replaceAll('Bearer ', '');
-      final userId = prefs.getString('userId');
-      final restaurantId = prefs.getString('restaurantId');
+      _channel = WebSocketChannel.connect(Uri.parse(_wsUrl));
       
-      if (token == null || userId == null || restaurantId == null) {
-        print('Missing credentials for WebSocket connection');
-        return;
-      }
-
-      // Create WebSocket URL with query parameters
-      final uri = Uri.parse(_wsUrl).replace(
-        queryParameters: {
-          'token': token,
-          'userId': userId,
-          'restaurantId': restaurantId,
-          'type': 'restaurant',
+      _channel!.stream.listen(
+        (message) {
+          final data = jsonDecode(message);
+          if (data['type'] == 'newOrder') {
+            _handleNewOrder(data['order']);
+          }
+        },
+        onError: (error) {
+          print('WebSocket error: $error');
+          _reconnect();
+        },
+        onDone: () {
+          print('WebSocket connection closed');
+          _reconnect();
         },
       );
-      
-      print('Attempting WebSocket connection to: $uri');
-      
-      await _channel?.sink.close();
-      _channel = WebSocketChannel.connect(uri);
-      
-      // Add connection timeout
-      bool connected = false;
-      Timer? timeoutTimer;
-      
-      timeoutTimer = Timer(const Duration(seconds: 10), () {
-        if (!connected) {
-          print('WebSocket connection timeout');
-          _handleConnectionError();
-        }
-      });
-
-      try {
-        await _channel!.ready;
-        connected = true;
-        timeoutTimer.cancel();
-        
-        _isConnected = true;
-        _reconnectAttempts = 0;
-        print('WebSocket connection established successfully');
-
-        _setupBackgroundHandler();
-        
-        // Send initial connection message
-        _channel?.sink.add(jsonEncode({
-          'type': 'connect',
-          'role': 'restaurant',
-          'restaurantId': restaurantId,
-        }));
-      } catch (e) {
-        print('Error during WebSocket connection setup: $e');
-        throw e;
-      }
-      
     } catch (e) {
       print('WebSocket connection error: $e');
-      _isConnected = false;
-      _handleConnectionError();
-    } finally {
-      _isConnecting = false;
+      _reconnect();
     }
   }
 
-  // Update the _processNewOrder method
-  Future<void> _processNewOrder(Map<String, dynamic> orderData) async {
+  void _handleNewOrder(Map<String, dynamic> orderData) async {
+    // Show local notification
+    await _showNotification(
+      'New Order Received!',
+      'Order #${orderData['_id'].toString().substring(orderData['_id'].toString().length - 6)}',
+    );
+
+    // Call the callback if set
+    onNewOrder?.call(orderData);
+  }
+
+  static void _handleBackgroundNotificationResponse(NotificationResponse details) {
+    print('Handling background notification: ${details.payload}');
+    // Handle the background notification
+  }
+
+  void _handleNotificationResponse(NotificationResponse details) async {
+    print('Handling foreground notification: ${details.payload}');
+    if (details.payload != null) {
+      try {
+        final data = jsonDecode(details.payload!);
+        onNewOrder?.call(data);
+      } catch (e) {
+        print('Error parsing notification payload: $e');
+      }
+    }
+  }
+
+  Future<void> _showNotification(String title, String body, {Map<String, dynamic>? payload}) async {
     try {
-      print('Processing new order notification: ${orderData['_id']}');
-      final orderId = orderData['_id']?.toString() ?? '';
-      final amount = orderData['totalAmount']?.toString() ?? '0';
-      
-      // Show notification immediately
-      await _notifications.show(
-        DateTime.now().millisecond,
-        'New Order Received!',
-        'Order #${orderId.substring(math.max(0, orderId.length - 6))} - ₹$amount',
-        NotificationDetails(
-          android: AndroidNotificationDetails(
-            'restaurant_orders',
-            'Restaurant Orders',
-            channelDescription: 'Notifications for new restaurant orders',
-            importance: Importance.max,
-            priority: Priority.high,
-            playSound: true,
-            enableVibration: true,
-            category: AndroidNotificationCategory.message,
-            fullScreenIntent: true,
-          ),
-          iOS: DarwinNotificationDetails(
-            presentAlert: true,
-            presentBadge: true,
-            presentSound: true,
-            sound: 'notification_sound.aiff',
-            interruptionLevel: InterruptionLevel.timeSensitive,
-          ),
-        ),
-        payload: jsonEncode(orderData),
+      final androidDetails = AndroidNotificationDetails(
+        'restaurant_orders',
+        'Restaurant Orders',
+        channelDescription: 'Notifications for new restaurant orders',
+        importance: Importance.max,
+        priority: Priority.high,
+        enableVibration: true,
+        playSound: true,
+        sound: const RawResourceAndroidNotificationSound('notification_sound'),
+        category: AndroidNotificationCategory.message,
+        fullScreenIntent: true,
+        visibility: NotificationVisibility.public,
       );
-      
-      print('Notification shown for order: ${orderId}');
-      onNewOrder?.call(orderData);
+
+      final iOSDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+        sound: 'default',
+        badgeNumber: 1,
+        categoryIdentifier: 'restaurant_orders',
+        threadIdentifier: 'restaurant_orders',
+        interruptionLevel: InterruptionLevel.timeSensitive,
+      );
+
+      final details = NotificationDetails(
+        android: androidDetails,
+        iOS: iOSDetails,
+      );
+
+      // Generate unique notification ID
+      final id = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+
+      await _notifications.show(
+        id,
+        title,
+        body,
+        details,
+        payload: payload != null ? jsonEncode(payload) : null,
+      );
+
+      print('Notification shown successfully: $title');
     } catch (e) {
       print('Error showing notification: $e');
     }
   }
 
-  void _handleConnectionError() {
-    if (!_shouldReconnect || _isConnecting) return;
-    
-    _reconnectAttempts++;
-    if (_reconnectAttempts < maxReconnectAttempts) {
-      final delay = Duration(seconds: math.min(30, math.pow(2, _reconnectAttempts).toInt()));
-      print('Scheduling reconnect attempt ${_reconnectAttempts} in ${delay.inSeconds} seconds');
-      _reconnectTimer?.cancel();
-      _reconnectTimer = Timer(delay, () => connectToWebSocket());
-    } else {
-      print('Max reconnection attempts reached');
-      _shouldReconnect = false;
-    }
+  Future<void> _reconnect() async {
+    await Future.delayed(const Duration(seconds: 5));
+    connectToWebSocket();
   }
 
-  // Add dispose method
   void dispose() {
-    _shouldReconnect = false;
-    _reconnectTimer?.cancel();
     _channel?.sink.close();
   }
 
-  Future<void> showNotification({
-    required String title,
-    required String body,
-    String? payload,
-    int? id,
-  }) async {
-    if (!_isInitialized) await initialize();
-
-    final androidDetails = AndroidNotificationDetails(
-      'mujbites_channel',
-      'MujBites Notifications',
-      channelDescription: 'Notifications from MujBites',
-      importance: Importance.high,
-      priority: Priority.high,
-      enableLights: true,
-      enableVibration: true,
-      playSound: true,
-    );
-
-    final iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-
-    final notificationDetails = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
-
-    await _notifications.show(
-      id ?? math.Random().nextInt(2147483647),
-      title,
-      body,
-      notificationDetails,
-      payload: payload,
-    );
-  }
-
-  // Remove this duplicate _reconnect method
-  // Future<void> _reconnect() async {
-  //   await Future.delayed(const Duration(seconds: 5));
-  //   connectToWebSocket();
-  // }
-
-  // Remove the second dispose method that only has _channel?.sink.close()
   // Add method to check notification permission status
   Future<bool> checkNotificationPermissions() async {
     if (kIsWeb) return true;
@@ -446,4 +370,34 @@ class NotificationService {
       ),
     );
   }
+
+  // Add debug method
+  Future<void> testNotification() async {
+    try {
+      await _showNotification(
+        'Test Notification',
+        'This is a test notification',
+        payload: {'type': 'test', 'data': 'test_data'},
+      );
+      print('Test notification sent successfully');
+    } catch (e) {
+      print('Error sending test notification: $e');
+    }
+  }
 }
+
+// Add this top-level function for background message handling
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  print('Handling background message: ${message.data}');
+  
+  // Show notification even when app is in background
+  final notificationService = NotificationService();
+  await notificationService.initialize();
+  notificationService._showNotification(
+    message.notification?.title ?? 'New Order',
+    message.notification?.body ?? 'You have received a new order',
+      payload: message.data
+  );
+} 
