@@ -8,7 +8,7 @@ import 'package:my_app/services/user_preferences.dart';
 import 'package:dio/dio.dart';  // Add this import at the top
 
 class ApiService {
-  static const bool useProductionUrl = false; // Toggle this for development/production
+  static const bool useProductionUrl = true; // Changed to true to use production URL
 
   final Dio _dio = Dio(BaseOptions(baseUrl: baseUrl));
 
