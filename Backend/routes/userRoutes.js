@@ -258,4 +258,38 @@ router.post('/logout', authenticateToken, async (req, res) => {
   }
 });
 
+// Update FCM Token
+router.post('/update-fcm-token', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId; // Get userId from authenticated token
+    const { fcmToken, deviceType, appVersion } = req.body;
+
+    // Validate required fields
+    if (!fcmToken) {
+      return res.status(400).json({ message: 'FCM token is required.' });
+    }
+
+    // Update user's FCM token in the database
+    const user = await User.findByIdAndUpdate(
+      userId,
+      {
+        fcmToken,
+        deviceType: deviceType || 'unknown',
+        appVersion: appVersion || '1.0.0',
+        lastTokenUpdate: new Date()
+      },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    res.status(200).json({ message: 'FCM token updated successfully' });
+  } catch (error) {
+    console.error('Error updating FCM token:', error);
+    res.status(500).json({ message: 'Server error.', error: error.message });
+  }
+});
+
 module.exports = router;

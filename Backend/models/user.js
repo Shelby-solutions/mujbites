@@ -30,6 +30,24 @@ const userSchema = new mongoose.Schema({
     ref: 'Restaurant',
     default: null
   },
+  fcmToken: {
+    type: String,
+    default: null,
+    sparse: true  // Allows null values and creates index only for non-null values
+  },
+  deviceType: {
+    type: String,
+    enum: ['android', 'ios', 'web', 'unknown'],
+    default: 'unknown'
+  },
+  appVersion: {
+    type: String,
+    default: '1.0.0'
+  },
+  lastTokenUpdate: {
+    type: Date,
+    default: null
+  },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
   isActive: { type: Boolean, default: true },

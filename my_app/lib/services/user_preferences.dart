@@ -34,19 +34,9 @@ class UserPreferences {
     
     final prefs = await SharedPreferences.getInstance();
     
-    // Clear existing data first
-    await prefs.clear();
-    await prefs.commit();
-    
-    // Save and verify each field individually
+    // Save each field individually
     await prefs.setString(_roleKey, role);
-    final verifyRole = prefs.getString(_roleKey);
-    print('Role - Expected: $role, Actual: $verifyRole');
-    
     await prefs.setString(_userIdKey, userId);
-    final verifyUserId = prefs.getString(_userIdKey);
-    print('UserId - Expected: $userId, Actual: $verifyUserId');
-    
     await prefs.setString(_tokenKey, token);
     await prefs.setBool(_isLoggedInKey, true);
     
@@ -58,10 +48,20 @@ class UserPreferences {
     
     await prefs.commit();
     
-    // Final verification
-    final finalRole = prefs.getString(_roleKey);
-    if (finalRole != role) {
-      throw Exception('Role verification failed - Expected: $role, Got: $finalRole');
+    // Verify data was saved correctly
+    final verifyRole = prefs.getString(_roleKey);
+    final verifyUserId = prefs.getString(_userIdKey);
+    final verifyToken = prefs.getString(_tokenKey);
+    final verifyIsLoggedIn = prefs.getBool(_isLoggedInKey);
+    
+    print('Verification:');
+    print('Role - Expected: $role, Actual: $verifyRole');
+    print('UserId - Expected: $userId, Actual: $verifyUserId');
+    print('Token exists: ${verifyToken != null}');
+    print('IsLoggedIn: $verifyIsLoggedIn');
+    
+    if (verifyRole != role || verifyUserId != userId || verifyToken != token || verifyIsLoggedIn != true) {
+      throw Exception('Data verification failed - some values were not saved correctly');
     }
   }
 
@@ -105,20 +105,36 @@ class UserPreferences {
     print('\n=== Initializing UserPreferences ===');
     final prefs = await SharedPreferences.getInstance();
     
-    // Debug current state before clear
-    final beforeClear = prefs.getKeys();
-    print('Before clear - stored keys:');
-    for (var key in beforeClear) {
+    // Debug current state
+    final currentKeys = prefs.getKeys();
+    print('Current stored keys:');
+    for (var key in currentKeys) {
       print('$key: ${prefs.get(key)}');
     }
     
-    await prefs.clear();
-    await prefs.commit();
+    // Only clear if there's invalid data
+    if (await _hasInvalidData(prefs)) {
+      print('Found invalid data, clearing preferences');
+      await prefs.clear();
+      await prefs.commit();
+    } else {
+      print('Valid data found, keeping preferences');
+    }
     
-    // Verify clear worked
-    final afterClear = prefs.getKeys();
-    print('After clear - stored keys: ${afterClear.length}');
     print('=== UserPreferences Initialized ===\n');
+  }
+
+  static Future<bool> _hasInvalidData(SharedPreferences prefs) async {
+    final userId = prefs.getString(_userIdKey);
+    final token = prefs.getString(_tokenKey);
+    final isLoggedIn = prefs.getBool(_isLoggedInKey) ?? false;
+    
+    // Check if we have all required data when logged in
+    if (isLoggedIn) {
+      return userId == null || token == null || userId.isEmpty || token.isEmpty;
+    }
+    
+    return false;
   }
 
   static Future<String?> getToken() async {

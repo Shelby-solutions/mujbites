@@ -6,6 +6,7 @@ import '../services/order_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../services/notification_service.dart';
 
 class CartWidget extends StatefulWidget {
   final VoidCallback onClose;
@@ -18,15 +19,75 @@ class CartWidget extends StatefulWidget {
 
 class _CartWidgetState extends State<CartWidget> with SingleTickerProviderStateMixin {
   final TextEditingController _addressController = TextEditingController();
+  final OrderService _orderService = OrderService();
+  late final AnimationController _slideController;
+  late final Animation<Offset> _slideAnimation;
   bool _showAddressPopup = false;
   bool _isOrdering = false;
-  final OrderService _orderService = OrderService();
-  late AnimationController _slideController;
-  late Animation<Offset> _slideAnimation;
+
+  // Cache styles and decorations
+  static final _headerGradient = LinearGradient(
+    colors: [
+      AppTheme.primary,
+      AppTheme.primary.withOpacity(0.8),
+    ],
+  );
+
+  static final _containerDecoration = BoxDecoration(
+    color: Colors.white,
+    borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.black.withOpacity(0.1),
+        blurRadius: 20,
+        offset: const Offset(0, -5),
+      ),
+    ],
+  );
+
+  static final _dragHandleDecoration = BoxDecoration(
+    color: Colors.grey[300],
+    borderRadius: BorderRadius.circular(2),
+  );
+
+  static final _itemContainerDecoration = BoxDecoration(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(16),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.black.withOpacity(0.05),
+        blurRadius: 8,
+        offset: const Offset(0, 2),
+      ),
+    ],
+  );
+
+  static final _quantityContainerDecoration = BoxDecoration(
+    color: Colors.grey[50],
+    borderRadius: BorderRadius.circular(12),
+  );
+
+  static final _summaryContainerDecoration = BoxDecoration(
+    color: Colors.grey[50],
+    borderRadius: BorderRadius.circular(16),
+  );
+
+  static final _orderButtonStyle = ElevatedButton.styleFrom(
+    backgroundColor: AppTheme.primary,
+    foregroundColor: Colors.black87,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(16),
+    ),
+    elevation: 0,
+  );
 
   @override
   void initState() {
     super.initState();
+    _initializeAnimations();
+  }
+
+  void _initializeAnimations() {
     _slideController = AnimationController(
       duration: const Duration(milliseconds: 300),
       vsync: this,
@@ -144,6 +205,12 @@ class _CartWidgetState extends State<CartWidget> with SingleTickerProviderStateM
         token: token,
       );
 
+      // Show local notification for order placed
+      await NotificationService().showLocalOrderPlacedNotification(
+        firstItem.restaurantName,
+        cartProvider.totalAmount,
+      );
+
       cartProvider.clearCart();
       
       // Close the address dialog first
@@ -175,258 +242,155 @@ class _CartWidgetState extends State<CartWidget> with SingleTickerProviderStateM
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final isSmallScreen = screenWidth < 360;
-    final contentPadding = isSmallScreen ? 12.0 : 16.0;
-    final iconSize = isSmallScreen ? 20.0 : 24.0;
-    final titleSize = isSmallScreen ? 20.0 : 24.0;
-    final subtitleSize = isSmallScreen ? 14.0 : 16.0;
+    final metrics = _UIMetrics(isSmallScreen);
 
     return SlideTransition(
       position: _slideAnimation,
       child: Container(
         height: MediaQuery.of(context).size.height * 0.85,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 20,
-              offset: const Offset(0, -5),
-            ),
-          ],
-        ),
+        decoration: _containerDecoration,
         child: Column(
           children: [
-            // Drag Handle
-            Center(
-              child: Container(
-                margin: const EdgeInsets.symmetric(vertical: 12),
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
+            _buildDragHandle(),
+            _buildHeader(metrics),
+            _buildCartItems(metrics),
+            _buildFooter(metrics),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDragHandle() {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 12),
+        width: 40,
+        height: 4,
+        decoration: _dragHandleDecoration,
+      ),
+    );
+  }
+
+  Widget _buildHeader(_UIMetrics metrics) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: _headerGradient,
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: metrics.contentPadding,
+        vertical: metrics.contentPadding * 0.75,
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Consumer<CartProvider>(
+            builder: (context, cart, _) => TextButton.icon(
+              onPressed: cart.items.isEmpty ? null : cart.clearCart,
+              icon: Icon(
+                Icons.remove_shopping_cart_outlined,
+                size: metrics.iconSize,
+                color: Colors.black87,
+              ),
+              label: Text(
+                'Clear',
+                style: GoogleFonts.montserrat(
+                  color: Colors.black87,
+                  fontWeight: FontWeight.w500,
+                  fontSize: metrics.subtitleSize,
                 ),
               ),
             ),
-
-            // Header
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    AppTheme.primary,
-                    AppTheme.primary.withOpacity(0.8),
-                  ],
+          ),
+          Row(
+            children: [
+              Icon(
+                Icons.shopping_bag_outlined,
+                color: Colors.black87,
+                size: metrics.iconSize,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Your Cart',
+                style: GoogleFonts.playfairDisplay(
+                  fontSize: metrics.titleSize,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
                 ),
               ),
-              padding: EdgeInsets.symmetric(
-                horizontal: contentPadding,
-                vertical: contentPadding * 0.75,
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            ],
+          ),
+          IconButton(
+            onPressed: () {
+              _slideController.reverse().then((_) => widget.onClose());
+            },
+            icon: Icon(
+              Icons.close,
+              color: Colors.black87,
+              size: metrics.iconSize,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCartItems(_UIMetrics metrics) {
+    return Expanded(
+      child: Consumer<CartProvider>(
+        builder: (context, cart, _) {
+          if (cart.items.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Consumer<CartProvider>(
-                    builder: (context, cart, _) => TextButton.icon(
-                      onPressed: cart.items.isEmpty ? null : cart.clearCart,
-                      icon: Icon(
-                        Icons.remove_shopping_cart_outlined,
-                        size: iconSize,
-                        color: Colors.black87,
-                      ),
-                      label: Text(
-                        'Clear',
-                        style: GoogleFonts.montserrat(
-                          color: Colors.black87,
-                          fontWeight: FontWeight.w500,
-                          fontSize: subtitleSize,
-                        ),
-                      ),
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.shopping_cart_outlined,
+                      size: metrics.iconSize * 2,
+                      color: Colors.grey[400],
                     ),
                   ),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.shopping_bag_outlined,
-                        color: Colors.black87,
-                        size: iconSize,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Your Cart',
-                        style: GoogleFonts.playfairDisplay(
-                          fontSize: titleSize,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                      ),
-                    ],
-                  ),
-                  IconButton(
-                    onPressed: () {
-                      _slideController.reverse().then((_) => widget.onClose());
-                    },
-                    icon: Icon(
-                      Icons.close,
-                      color: Colors.black87,
-                      size: iconSize,
+                  const SizedBox(height: 16),
+                  Text(
+                    'Your cart is empty',
+                    style: GoogleFonts.montserrat(
+                      fontSize: metrics.titleSize * 0.8,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[600],
                     ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Add some delicious items to get started!',
+                    style: GoogleFonts.montserrat(
+                      fontSize: metrics.subtitleSize,
+                      color: Colors.grey[500],
+                    ),
+                    textAlign: TextAlign.center,
                   ),
                 ],
               ),
-            ),
+            );
+          }
 
-            // Cart Items
-            Expanded(
-              child: Consumer<CartProvider>(
-                builder: (context, cart, _) {
-                  if (cart.items.isEmpty) {
-                    return Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(20),
-                            decoration: BoxDecoration(
-                              color: Colors.grey[100],
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(
-                              Icons.shopping_cart_outlined,
-                              size: iconSize * 2,
-                              color: Colors.grey[400],
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'Your cart is empty',
-                            style: GoogleFonts.montserrat(
-                              fontSize: titleSize * 0.8,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Add some delicious items to get started!',
-                            style: GoogleFonts.montserrat(
-                              fontSize: subtitleSize,
-                              color: Colors.grey[500],
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ],
-                      ),
-                    );
-                  }
-
-                  return ListView.builder(
-                    padding: EdgeInsets.all(contentPadding),
-                    itemCount: cart.items.length,
-                    itemBuilder: (context, index) {
-                      final item = cart.items[index];
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _buildCartItem(item, cart, isSmallScreen),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-
-            // Footer
-            Consumer<CartProvider>(
-              builder: (context, cart, _) => Container(
-                padding: EdgeInsets.all(contentPadding),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 10,
-                      offset: const Offset(0, -5),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Order Summary
-                    if (cart.items.isNotEmpty) ...[
-                      Container(
-                        padding: EdgeInsets.all(contentPadding),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[50],
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Column(
-                          children: [
-                            _buildSummaryRow(
-                              'Subtotal',
-                              '₹${cart.totalAmount.toStringAsFixed(2)}',
-                              isSmallScreen,
-                            ),
-                            if (cart.totalAmount < 100)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 8),
-                                child: Text(
-                                  'Add ₹${(100 - cart.totalAmount).toStringAsFixed(2)} more to place order',
-                                  style: GoogleFonts.montserrat(
-                                    fontSize: subtitleSize * 0.9,
-                                    color: Colors.red[400],
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(height: contentPadding),
-                    ],
-
-                    // Place Order Button
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: cart.items.isEmpty ? null : () => _showAddressDialog(context),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.primary,
-                          foregroundColor: Colors.black87,
-                          padding: EdgeInsets.symmetric(
-                            vertical: contentPadding,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          elevation: 0,
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.local_shipping_outlined,
-                              size: iconSize,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Place Order',
-                              style: GoogleFonts.montserrat(
-                                fontSize: subtitleSize,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
+          return ListView.builder(
+            padding: EdgeInsets.all(metrics.contentPadding),
+            itemCount: cart.items.length,
+            itemBuilder: (context, index) {
+              final item = cart.items[index];
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _buildCartItem(item, cart, metrics.isSmallScreen),
+              );
+            },
+          );
+        },
       ),
     );
   }
@@ -436,17 +400,7 @@ class _CartWidgetState extends State<CartWidget> with SingleTickerProviderStateM
     final priceSize = isSmallScreen ? 16.0 : 18.0;
 
     return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+      decoration: _itemContainerDecoration,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Row(
@@ -484,10 +438,7 @@ class _CartWidgetState extends State<CartWidget> with SingleTickerProviderStateM
               ),
             ),
             Container(
-              decoration: BoxDecoration(
-                color: Colors.grey[50],
-                borderRadius: BorderRadius.circular(12),
-              ),
+              decoration: _quantityContainerDecoration,
               child: Row(
                 children: [
                   IconButton(
@@ -521,27 +472,81 @@ class _CartWidgetState extends State<CartWidget> with SingleTickerProviderStateM
     );
   }
 
-  Widget _buildSummaryRow(String label, String value, bool isSmallScreen) {
-    final textSize = isSmallScreen ? 14.0 : 16.0;
-    
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          label,
-          style: GoogleFonts.montserrat(
-            fontSize: textSize,
-            color: Colors.grey[600],
-          ),
+  Widget _buildFooter(_UIMetrics metrics) {
+    return Consumer<CartProvider>(
+      builder: (context, cart, _) => Container(
+        padding: EdgeInsets.all(metrics.contentPadding),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 10,
+              offset: const Offset(0, -5),
+            ),
+          ],
         ),
-        Text(
-          value,
-          style: GoogleFonts.montserrat(
-            fontSize: textSize,
-            fontWeight: FontWeight.bold,
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Order Summary
+            if (cart.items.isNotEmpty) ...[
+              Container(
+                padding: EdgeInsets.all(metrics.contentPadding),
+                decoration: _summaryContainerDecoration,
+                child: Column(
+                  children: [
+                    _buildSummaryRow(
+                      'Subtotal',
+                      '₹${cart.totalAmount.toStringAsFixed(2)}',
+                      metrics.isSmallScreen,
+                    ),
+                    if (cart.totalAmount < 100)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          'Add ₹${(100 - cart.totalAmount).toStringAsFixed(2)} more to place order',
+                          style: GoogleFonts.montserrat(
+                            fontSize: metrics.subtitleSize * 0.9,
+                            color: Colors.red[400],
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              SizedBox(height: metrics.contentPadding),
+            ],
+
+            // Place Order Button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: cart.items.isEmpty ? null : () => _showAddressDialog(context),
+                style: _orderButtonStyle,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.local_shipping_outlined,
+                      size: metrics.iconSize,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Place Order',
+                      style: GoogleFonts.montserrat(
+                        fontSize: metrics.subtitleSize,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 
@@ -599,4 +604,48 @@ class _CartWidgetState extends State<CartWidget> with SingleTickerProviderStateM
       ),
     );
   }
+
+  Widget _buildSummaryRow(String label, String value, bool isSmallScreen) {
+    final textSize = isSmallScreen ? 14.0 : 16.0;
+    
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.montserrat(
+            fontSize: textSize,
+            color: Colors.grey[600],
+          ),
+        ),
+        Text(
+          value,
+          style: GoogleFonts.montserrat(
+            fontSize: textSize,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// Helper class to manage UI metrics
+class _UIMetrics {
+  final bool isSmallScreen;
+  
+  final double contentPadding;
+  final double iconSize;
+  final double titleSize;
+  final double subtitleSize;
+  final double itemSize;
+  final double priceSize;
+
+  _UIMetrics(this.isSmallScreen)
+    : contentPadding = isSmallScreen ? 12.0 : 16.0,
+      iconSize = isSmallScreen ? 20.0 : 24.0,
+      titleSize = isSmallScreen ? 20.0 : 24.0,
+      subtitleSize = isSmallScreen ? 14.0 : 16.0,
+      itemSize = isSmallScreen ? 14.0 : 16.0,
+      priceSize = isSmallScreen ? 16.0 : 18.0;
 } 

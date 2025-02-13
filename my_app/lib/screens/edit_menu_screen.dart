@@ -6,7 +6,12 @@ import 'package:google_fonts/google_fonts.dart';
 import '../widgets/loading_screen.dart';
 
 class EditMenuScreen extends StatefulWidget {
-  const EditMenuScreen({super.key});
+  final String restaurantId;
+
+  const EditMenuScreen({
+    super.key,
+    required this.restaurantId,
+  });
 
   @override
   State<EditMenuScreen> createState() => _EditMenuScreenState();

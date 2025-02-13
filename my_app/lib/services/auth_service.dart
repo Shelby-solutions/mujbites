@@ -17,52 +17,32 @@ class AuthService {
 
       final user = response['user'] as Map<String, dynamic>;
       final role = user['role']?.toString();
+      final token = response['token'].toString();
       
       print('\n=== Login Data ===');
       print('User: $user');
       print('Role from response: $role');
 
       // First monitor call
-      print('\nBefore any changes:');
+      print('\nBefore saving new data:');
       await UserPreferences.monitorPreferences();
 
-      // Clear all existing data
+      // Save user data without clearing first
+      await UserPreferences.saveUserData(
+        userId: user['_id'].toString(),
+        token: token,
+        role: role!,
+        restaurantData: user['restaurant'] as Map<String, dynamic>?,
+      );
+      
+      print('\nAfter saving data:');
+      await UserPreferences.monitorPreferences();
+
+      // Verify data was saved correctly
       final prefs = await SharedPreferences.getInstance();
-      await prefs.clear();
-      await prefs.commit();
-      
-      print('\nAfter clear:');
-      await UserPreferences.monitorPreferences();
-
-      // Set role first and verify
-      print('\nSetting role to: $role');
-      final success = await prefs.setString('role', role!);
-      print('Set role success: $success');
       final storedRole = prefs.getString('role');
-      print('Immediately after setting - stored role: $storedRole');
-      
-      // Save other data
-      await prefs.setString('userId', user['_id'].toString());
-      await prefs.setString('token', response['token'].toString());
-      await prefs.setBool('isLoggedIn', true);
-
-      if (user['restaurant'] != null) {
-        final restaurant = user['restaurant'] as Map<String, dynamic>;
-        await prefs.setString('restaurantId', restaurant['_id'].toString());
-        await prefs.setString('restaurantName', restaurant['name'].toString());
-        await prefs.setBool('restaurantIsActive', restaurant['isActive'] as bool);
-      }
-
-      // Force commit all changes
-      await prefs.commit();
-
-      print('\nFinal state:');
-      await UserPreferences.monitorPreferences();
-
-      // Verify one last time
-      final finalRole = prefs.getString('role');
-      if (finalRole != role) {
-        throw Exception('Role verification failed - Expected: $role, Got: $finalRole');
+      if (storedRole != role) {
+        throw Exception('Role verification failed - Expected: $role, Got: $storedRole');
       }
 
       return response;

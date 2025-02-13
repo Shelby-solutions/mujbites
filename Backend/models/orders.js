@@ -47,7 +47,7 @@ const orderSchema = new mongoose.Schema({
   },
   orderStatus: {
     type: String,
-    enum: ["Placed", "Accepted", "Preparing", "Ready", "Delivered", "Cancelled"],
+    enum: ["Placed", "Accepted", "Delivered", "Cancelled"],
     default: "Placed"
   },
   cancellationReason: { 
@@ -58,6 +58,12 @@ const orderSchema = new mongoose.Schema({
     type: Date, 
     default: Date.now 
   },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+}, {
+  timestamps: true  // This will automatically manage createdAt and updatedAt
 });
 
 // Method to get the restaurant owner's ID

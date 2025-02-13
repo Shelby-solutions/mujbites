@@ -6,21 +6,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:my_app/services/user_preferences.dart';
 import 'package:dio/dio.dart';  // Add this import at the top
+import 'package:package_info_plus/package_info_plus.dart';
 
 class ApiService {
-  static const bool useProductionUrl = false;
+  // Change to true for production
+  static const bool useProductionUrl = true;
 
-  // Change from getter to static const
+  // Production URL
   static const String productionUrl = 'https://mujbites-app.onrender.com/api';
   static const String devWebUrl = 'http://localhost:5000/api';
   static const String devAndroidUrl = 'http://10.0.2.2:5000/api';
   static const String devIosUrl = 'http://localhost:5000/api';
-
-  final Dio _dio = Dio(BaseOptions(
-    baseUrl: useProductionUrl ? productionUrl : _getDevUrl(),
-    connectTimeout: const Duration(seconds: 30),
-    receiveTimeout: const Duration(seconds: 30),
-  ));
 
   // Helper method to get development URL
   static String _getDevUrl() {
@@ -33,11 +29,20 @@ class ApiService {
   static String get baseUrl {
     return useProductionUrl ? productionUrl : _getDevUrl();
   }
+
+  late final Dio _dio = Dio(BaseOptions(
+    baseUrl: baseUrl,
+    connectTimeout: const Duration(seconds: 30),
+    receiveTimeout: const Duration(seconds: 30),
+    validateStatus: (status) => status != null && status < 500,
+  ));
   
   // For debugging
   static Uri getUri(String path) {
     final uri = Uri.parse('$baseUrl$path');
-    print('Making request to: $uri');
+    if (!useProductionUrl) {
+      print('Making request to: $uri');
+    }
     return uri;
   }
 
@@ -379,18 +384,30 @@ class ApiService {
     }
   }
 
-  Future<List<Map<String, dynamic>>> getRestaurantOrders(String restaurantId) async {
+  Future<List<Map<String, dynamic>>> getRestaurantOrders(
+    String restaurantId, {
+    String? status,
+    bool forceRefresh = false,
+  }) async {
     try {
+      final queryParams = {
+        if (status != null) 'status': status,
+        if (forceRefresh) 'timestamp': DateTime.now().millisecondsSinceEpoch.toString(),
+      };
+
+      final uri = Uri.parse('$baseUrl/orders/restaurant/$restaurantId')
+          .replace(queryParameters: queryParams);
+
       final response = await http.get(
-        getUri('/restaurants/$restaurantId/orders'),
+        uri,
         headers: await getHeaders(),
-      );
+      ).timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
         return data.cast<Map<String, dynamic>>();
       } else {
-        throw Exception('Failed to fetch orders: ${response.statusCode}');
+        throw Exception('Failed to fetch restaurant orders: ${response.body}');
       }
     } catch (e) {
       print('Error fetching restaurant orders: $e');
@@ -398,25 +415,38 @@ class ApiService {
     }
   }
 
-  Future<void> updateOrderStatus(String orderId, String status, [String? reason]) async {
+  Future<Map<String, dynamic>> updateOrderStatus(String orderId, String action, [String? reason]) async {
     try {
-      final body = {
-        'status': status,
-        if (reason != null) 'cancellationReason': reason,
-      };
-      
-      final response = await http.put(
-        getUri('/restaurants/orders/$orderId'),
+      final response = await http.patch(
+        getUri('/orders/$orderId/$action'),
         headers: await getHeaders(),
-        body: jsonEncode(body),
+        body: jsonEncode({
+          'reason': reason,
+          'timestamp': DateTime.now().toIso8601String(),
+        }),
       );
 
-      if (response.statusCode != 200) {
-        throw Exception('Failed to update order status: ${response.statusCode}');
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Failed to update order status: ${response.body}');
       }
     } catch (e) {
       print('Error updating order status: $e');
       rethrow;
+    }
+  }
+
+  String _getStatusEndpoint(String action) {
+    switch (action.toLowerCase()) {
+      case 'confirm':
+        return 'confirm';  // This matches the backend route
+      case 'deliver':
+        return 'deliver';
+      case 'cancel':
+        return 'cancel';
+      default:
+        throw Exception('Invalid action: $action');
     }
   }
 
@@ -701,6 +731,52 @@ class ApiService {
     } catch (e) {
       print('Server connection error: $e');
       return false;
+    }
+  }
+
+  Future<void> updateFcmToken(String token) async {
+    try {
+      // Get the authentication token
+      final authToken = await UserPreferences.getToken();
+      if (authToken == null) {
+        throw Exception('Authentication token not found');
+      }
+
+      final headers = {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $authToken',
+      };
+
+      final response = await http.post(
+        getUri('/users/update-fcm-token'),
+        headers: headers,
+        body: jsonEncode({
+          'fcmToken': token,
+          'deviceType': Platform.isAndroid ? 'android' : 'ios',
+          'appVersion': await _getAppVersion(),
+          'timestamp': DateTime.now().toIso8601String(),
+        }),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode != 200) {
+        final responseData = jsonDecode(response.body);
+        throw Exception('Failed to update FCM token: ${responseData['message'] ?? response.body}');
+      }
+
+      print('FCM token updated successfully');
+    } catch (e) {
+      print('Error updating FCM token: $e');
+      rethrow;
+    }
+  }
+
+  Future<String> _getAppVersion() async {
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      return packageInfo.version;
+    } catch (e) {
+      print('Error getting app version: $e');
+      return '1.0.0'; // Fallback version
     }
   }
 }

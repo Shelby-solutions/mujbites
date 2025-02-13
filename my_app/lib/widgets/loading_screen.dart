@@ -1,228 +1,187 @@
 import 'package:flutter/material.dart';
-import 'dart:async';
-import '../theme/app_theme.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../theme/app_theme.dart';
+import 'package:shimmer/shimmer.dart';
 
-class LoadingScreen extends StatefulWidget {
+class LoadingScreen extends StatelessWidget {
   const LoadingScreen({super.key});
 
   @override
-  State<LoadingScreen> createState() => _LoadingScreenState();
-}
-
-class _LoadingScreenState extends State<LoadingScreen> with SingleTickerProviderStateMixin {
-  String _emoji = '🍳';
-  double _emojiSize = 32;
-  late Timer _emojiTimer;
-  late Timer _sizeTimer;
-  
-  final List<String> _emojis = ['🍳', '✨', '⭐', '🍴', '🍽️'];
-  
-  late AnimationController _controller;
-  late Animation<double> _bounceAnimation;
-  bool _disposed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    
-    _controller = AnimationController(
-      duration: const Duration(seconds: 1),
-      vsync: this,
-    );
-
-    _bounceAnimation = CurvedAnimation(
-      parent: _controller,
-      curve: Curves.easeInOut,
-    );
-
-    // Start repeating animation
-    _startAnimation();
-    _setupTimers();
-  }
-
-  void _startAnimation() {
-    if (_disposed) return;
-    _controller.forward().then((_) {
-      if (_disposed) return;
-      _controller.reverse().then((_) {
-        if (_disposed) return;
-        _startAnimation();
-      });
-    });
-  }
-
-  void _setupTimers() {
-    _emojiTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
-      if (!mounted || _disposed) return;
-      setState(() {
-        _emoji = _emojis[timer.tick % _emojis.length];
-      });
-    });
-    
-    _sizeTimer = Timer.periodic(const Duration(milliseconds: 1000), (timer) {
-      if (!mounted || _disposed) return;
-      setState(() {
-        _emojiSize = 40;
-      });
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (!mounted || _disposed) return;
-        setState(() {
-          _emojiSize = 32;
-        });
-      });
-    });
-  }
-
-  @override
-  void dispose() {
-    _disposed = true;
-    _emojiTimer.cancel();
-    _sizeTimer.cancel();
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isSmallScreen = screenWidth < 600;
+    final cardWidth = isSmallScreen ? screenWidth * 0.44 : screenWidth * 0.3;
+
     return Container(
-      decoration: const BoxDecoration(
+      padding: EdgeInsets.all(isSmallScreen ? 8 : 16),
+      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0xFFFEFCE8), Colors.white],
+          colors: [
+            Colors.white,
+            Colors.grey[50]!,
+            Colors.grey[100]!,
+          ],
+          stops: const [0.0, 0.5, 1.0],
         ),
       ),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Animated emojis
-            Stack(
-              children: [
-                ScaleTransition(
-                  scale: _bounceAnimation,
-                  child: Text(
-                    _emoji,
-                    style: TextStyle(
-                      fontSize: _emojiSize,
-                    ),
-                  ),
+      child: Column(
+        children: [
+          // Loading header
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Shimmer.fromColors(
+              baseColor: Colors.grey[300]!,
+              highlightColor: Colors.grey[100]!,
+              child: Container(
+                width: screenWidth * 0.6,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                Positioned(
-                  top: -16,
-                  right: -16,
-                  child: ScaleTransition(
-                    scale: _bounceAnimation,
-                    child: const Text(
-                      '✨',
-                      style: TextStyle(fontSize: 24),
-                    ),
-                  ),
-                ),
-                Positioned(
-                  bottom: -16,
-                  left: -16,
-                  child: ScaleTransition(
-                    scale: _bounceAnimation,
-                    child: const Text(
-                      '⭐',
-                      style: TextStyle(fontSize: 24),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 32),
-            
-            // Loading text
-            Text(
-              'Cooking up something special...',
-              style: GoogleFonts.montserrat(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: AppTheme.primary,
               ),
             ),
-            
-            const SizedBox(height: 16),
-            
-            // Bouncing dots
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List.generate(3, (index) {
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: _BouncingDot(
-                    delay: Duration(milliseconds: index * 200),
-                  ),
-                );
-              }),
+          ),
+          // Shimmer loading for restaurant cards
+          Expanded(
+            child: GridView.builder(
+              physics: const BouncingScrollPhysics(),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: screenWidth > 1024 ? 3 : 2,
+                childAspectRatio: 0.85,
+                crossAxisSpacing: isSmallScreen ? 8 : 16,
+                mainAxisSpacing: isSmallScreen ? 8 : 16,
+              ),
+              itemCount: 6, // Show 6 shimmer cards
+              itemBuilder: (context, index) => _buildShimmerCard(cardWidth, index),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildShimmerCard(double width, int index) {
+    return Shimmer.fromColors(
+      period: Duration(milliseconds: 1500 + (index * 200)), // Staggered animation
+      baseColor: Colors.grey[300]!,
+      highlightColor: Colors.grey[100]!,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 15,
+              spreadRadius: 1,
+              offset: const Offset(0, 8),
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _BouncingDot extends StatefulWidget {
-  final Duration delay;
-
-  const _BouncingDot({required this.delay});
-
-  @override
-  State<_BouncingDot> createState() => _BouncingDotState();
-}
-
-class _BouncingDotState extends State<_BouncingDot> with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _animation;
-  bool _disposed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: const Duration(milliseconds: 600),
-      vsync: this,
-    );
-    
-    _animation = Tween<double>(begin: 0, end: -10).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    )..addListener(() {
-      if (!_disposed) {
-        setState(() {});
-      }
-    });
-
-    Future.delayed(widget.delay, () {
-      if (!_disposed && mounted) {
-        _controller.repeat(reverse: true);
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _disposed = true;
-    if (_controller.isAnimating) {
-      _controller.stop();
-    }
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Transform.translate(
-      offset: Offset(0, _animation.value),
-      child: Container(
-        width: 8,
-        height: 8,
-        decoration: BoxDecoration(
-          color: AppTheme.primary,
-          shape: BoxShape.circle,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Image placeholder with gradient overlay
+            Container(
+              height: width * 0.6,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.white,
+                    Colors.grey[100]!,
+                    Colors.white,
+                  ],
+                ),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(20),
+                ),
+              ),
+              child: Stack(
+                children: [
+                  Positioned(
+                    right: 12,
+                    top: 12,
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
+            // Content placeholders with improved layout
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Title placeholder with rounded corners
+                  Container(
+                    width: width * 0.7,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  
+                  // Rating and price range placeholder
+                  Row(
+                    children: [
+                      Container(
+                        width: 60,
+                        height: 16,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        width: 40,
+                        height: 16,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  
+                  // Address placeholder with multiple lines
+                  Container(
+                    width: width * 0.9,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    width: width * 0.6,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

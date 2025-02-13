@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import '../widgets/custom_navbar.dart';
 import '../services/api_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,6 +11,11 @@ import '../theme/app_theme.dart';
 import '../services/user_preferences.dart';
 import '../screens/edit_menu_screen.dart';
 import '../widgets/loading_screen.dart';
+import 'package:flutter/rendering.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'dart:convert';
+import 'dart:io' show Platform;
 
 class RestaurantPanelScreen extends StatefulWidget {
   const RestaurantPanelScreen({super.key});
@@ -17,7 +24,7 @@ class RestaurantPanelScreen extends StatefulWidget {
   State<RestaurantPanelScreen> createState() => _RestaurantPanelScreenState();
 }
 
-class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
+class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> with AutomaticKeepAliveClientMixin {
   final ApiService _apiService = ApiService();
   final NotificationService _notificationService = NotificationService();
   List<Map<String, dynamic>> _orders = [];
@@ -25,7 +32,7 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
   String? _error;
   String? _restaurantId;
   bool _isOpen = false;
-  String _activeTab = 'pending';  // 'pending', 'completed', 'cancelled'
+  String _activeTab = 'Placed';
   bool _showSettings = false;
   Timer? _refreshTimer;
   String? _userRole;
@@ -33,21 +40,110 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
   Map<String, dynamic>? _restaurantData;
   DateTime? _openingTime;
   bool _showOrders = false;
+  bool _hasMoreOrders = true;
+  
+  // Optimized state management
+  final Map<String, bool> _orderLoadingStates = {};
+  Map<String, int> _orderCounts = {
+    'Placed': 0,
+    'Accepted': 0,
+    'Delivered': 0,
+    'Cancelled': 0,
+  };
+
+  // Cache computed values
+  final Map<String, List<Map<String, dynamic>>> _orderCache = {};
+  final ValueNotifier<bool> _isLoadingNotifier = ValueNotifier<bool>(true);
+  final ValueNotifier<String?> _errorNotifier = ValueNotifier<String?>(null);
+  
+  // Debounce timer for refresh
+  Timer? _debounceTimer;
+  
+  // Scroll controller for optimized list
+  final ScrollController _scrollController = ScrollController();
+
+  // Add this at the top with other class variables
+  final Map<String, Completer<void>> _fetchCompleters = {};
+  final Map<String, DateTime> _lastFetchTime = {};
+  static const _cacheValidityDuration = Duration(seconds: 10);
+
+  static const Map<String, String> STATUS_DISPLAY = {
+    'Placed': 'New Order',
+    'Accepted': 'Accepted',
+    'Delivered': 'Completed',
+    'Cancelled': 'Cancelled'
+  };
+
+  // Add month names as a class variable
+  final monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  WebSocketChannel? _webSocket;
+  StreamSubscription? _webSocketSubscription;
+  bool _isDisposed = false;
+
+  final List<String> _cancelReasons = [
+    'Out of ingredients',
+    'Kitchen closed',
+    'Too busy to fulfill',
+    'Customer requested cancellation',
+    'Other',
+  ];
+
+  // Add new variables for tracking order updates
+  DateTime? _lastKnownOrderTime;
+  int _reconnectAttempts = 0;
+  static const int MAX_RECONNECT_ATTEMPTS = 5;
+  static const Duration RECONNECT_DELAY = Duration(seconds: 5);
+
+  // Add these methods after other instance variables
+  Timer? _orderCleanupTimer;
+  static const Duration ORDER_EXPIRY_DURATION = Duration(minutes: 10);
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
     super.initState();
+    print('RestaurantPanelScreen - initState called');
+    _activeTab = 'Placed';
+    _orders = [];
     _loadUserData();
-    _fetchRestaurantData();
+    _fetchRestaurantData().then((_) {
+      print('Restaurant data fetched, setting up orders refresh');
+      _setupOrdersRefresh();
+      _prefetchOtherTabs();
+    });
+    _setupNotificationHandlers();
+    _scrollController.addListener(_onScroll);
+    _initializeWebSocket();
+    _fetchOrders(forceRefresh: true);
+    _updateOrderCounts();
+    
+    // Set up timer to check for old orders
+    _orderCleanupTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      _checkAndCancelOldOrders();
+    });
   }
 
   @override
   void dispose() {
+    _orderCleanupTimer?.cancel();
+    _isDisposed = true;
     _refreshTimer?.cancel();
+    _debounceTimer?.cancel();
+    _scrollController.dispose();
+    _isLoadingNotifier.dispose();
+    _errorNotifier.dispose();
     if (_restaurantData != null) {
       _notificationService.unsubscribeFromRestaurantOrders(_restaurantData!['_id']);
     }
     _notificationService.dispose();
+    _webSocketSubscription?.cancel();
+    _webSocket?.sink.close();
     super.dispose();
   }
 
@@ -74,8 +170,6 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
 
   Future<void> _fetchRestaurantData() async {
     try {
-      setState(() => _isLoading = true);
-      
       final userId = await UserPreferences.getString('userId');
       print('Fetching restaurant data for user: $userId');
       
@@ -85,20 +179,23 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
       if (mounted) {
         setState(() {
           _restaurantData = data;
+          _isLoadingNotifier.value = false;  // Reset loading state here
           _isOpen = data['isActive'] ?? false;
-          _isLoading = false;
           _error = null;
         });
         
         // Subscribe to notifications for this restaurant
         await _notificationService.subscribeToRestaurantOrders(data['_id']);
+        
+        // Fetch initial orders after restaurant data is loaded
+        await _fetchOrders();
       }
     } catch (e) {
       print('Error fetching restaurant data: $e');
       if (mounted) {
         setState(() {
-          _error = 'Failed to load restaurant data';
-          _isLoading = false;
+          _error = 'Failed to load restaurant data: $e';
+          _isLoadingNotifier.value = false;  // Reset loading state on error too
         });
       }
     }
@@ -235,122 +332,348 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
 
   Future<void> _initializeNotifications() async {
     await _notificationService.initialize();
-    
-    // Check notification permissions
-    final hasPermission = await _notificationService.checkNotificationPermissions();
-    if (!hasPermission && mounted) {
-      // Show custom permission dialog
-      await _notificationService.showPermissionDialog(context);
-    }
-    
-    await _notificationService.connectToWebSocket();
-    
     _notificationService.onNewOrder = (orderData) {
-      _fetchOrders();
-      
-      if (mounted) {
-        final orderId = orderData['_id'].toString();
-        final shortOrderId = orderId.substring(orderId.length - 6);
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('New order #$shortOrderId received!'),
-            action: SnackBarAction(
-              label: 'View',
-              onPressed: () {
-                setState(() {
-                  _showOrders = true;
-                  _activeTab = 'pending';
-                });
-              },
-            ),
-            duration: const Duration(seconds: 5),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: AppTheme.primary,
-          ),
-        );
-      }
+      _fetchOrders(); // Refresh orders when new order notification received
     };
   }
 
-  Future<void> _fetchOrders() async {
-    if (_restaurantData == null) return;
+  Future<void> _setupOrdersRefresh() async {
+    print('Setting up orders refresh timer');
+    _refreshTimer?.cancel();
+    
+    // More frequent updates for 'Placed' orders
+    _refreshTimer = Timer.periodic(
+      _activeTab == 'Placed' ? 
+        const Duration(seconds: 15) : 
+        const Duration(seconds: 30), 
+      (_) {
+        if (mounted && !_isDisposed) {
+          print('Timer triggered - fetching orders for $_activeTab status');
+          _fetchOrders(forceRefresh: _activeTab == 'Placed');
+        }
+      }
+    );
+    
+    // Initial fetch
+    print('Performing initial order fetch');
+    await _fetchOrders(forceRefresh: true);
+  }
+
+  Future<void> _setupNotificationHandlers() async {
+    await _notificationService.initialize();
+    _notificationService.onNewOrder = (orderData) {
+      _fetchOrders(); // Refresh orders when new order notification received
+    };
+  }
+
+  Future<void> _fetchOrders({bool forceRefresh = false}) async {
+    if (!mounted || _restaurantData == null) return;
+
+    final currentStatus = _activeTab;
+    print('Fetching orders for status: $currentStatus, forceRefresh: $forceRefresh');
+    
+    // Always fetch for 'Placed' orders or when force refreshing
+    final shouldBypassCache = currentStatus == 'Placed' || forceRefresh;
+    
+    // Check cache validity
+    if (!shouldBypassCache && 
+        _lastFetchTime.containsKey(currentStatus) &&
+        DateTime.now().difference(_lastFetchTime[currentStatus]!) < const Duration(seconds: 30)) {
+      print('Using cached orders for status: $currentStatus');
+      setState(() {
+        _orders = List<Map<String, dynamic>>.from(_orderCache[currentStatus] ?? []);
+      });
+      return;
+    }
+
+    await _fetchOrdersForStatus(currentStatus);
+  }
+
+  Future<void> _fetchOrdersForStatus(String status) async {
+    if (!mounted || _restaurantData == null) return;
+
+    print('Fetching orders for status: $status');
+    setState(() {
+      if (status == _activeTab) {
+        _isLoading = true;
+      }
+      _error = null;
+    });
 
     try {
-      final orders = await _apiService.getRestaurantOrders(_restaurantData!['_id']);
-      if (mounted) {
-        setState(() {
-          _orders = orders;
+      final orders = await _apiService.getRestaurantOrders(
+        _restaurantData!['_id'],
+        status: status,
+      );
+
+      if (!mounted) return;
+
+      print('Received ${orders.length} orders for status: $status');
+      
+      // Filter orders for today only
+      final todayOrders = orders.where(_isOrderFromToday).toList();
+      print('Filtered ${todayOrders.length} orders for today');
+      
+      // Create deep copies of the orders to prevent reference issues
+      final ordersCopy = todayOrders.map((order) {
+        final copy = Map<String, dynamic>.from(order);
+        if (order['customer'] != null) {
+          copy['customer'] = Map<String, dynamic>.from(order['customer']);
+        }
+        if (order['items'] != null) {
+          copy['items'] = List<Map<String, dynamic>>.from(
+            order['items'].map((item) => Map<String, dynamic>.from(item))
+          );
+        }
+        return copy;
+      }).toList();
+      
+      setState(() {
+        if (status == _activeTab) {
+          _orders = ordersCopy;
           _isLoading = false;
-          _error = null;
-        });
-      }
+        }
+        _orderCache[status] = ordersCopy;
+        _lastFetchTime[status] = DateTime.now();
+      });
+
+      _updateOrderCounts();
+
     } catch (e) {
-      print('Error fetching orders: $e');
-      if (mounted) {
-        setState(() {
-          _error = 'Failed to load orders: $e';
+      print('Error fetching orders for $status: $e');
+      if (!mounted) return;
+      setState(() {
+        if (status == _activeTab) {
+          _error = 'Failed to load orders';
           _isLoading = false;
-        });
+        }
+      });
+    }
+  }
+
+  Future<void> _prefetchOtherTabs() async {
+    if (!mounted || _restaurantData == null) return;
+    
+    final allStatuses = ['Placed', 'Accepted', 'Delivered', 'Cancelled'];
+    final currentStatus = _activeTab;
+    
+    for (final status in allStatuses) {
+      if (status == currentStatus) continue;
+      
+      try {
+        print('Prefetching orders for status: $status');
+        final orders = await _apiService.getRestaurantOrders(
+          _restaurantData!['_id'],
+          status: status,
+        );
+        
+        if (!mounted) return;
+        
+        _orderCache[status] = List<Map<String, dynamic>>.from(orders);
+        print('Prefetched ${orders.length} orders for status: $status');
+        
+        _updateOrderCounts();
+      } catch (e) {
+        print('Error prefetching orders for $status: $e');
       }
     }
   }
 
-  Future<void> _handleOrderStatusUpdate(String orderId, String status, [String? reason]) async {
+  void _onScroll() {
+    if (!_hasMoreOrders || _isLoadingNotifier.value) return;
+    
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    final currentScroll = _scrollController.position.pixels;
+    
+    if (currentScroll >= maxScroll - 200) {
+      _fetchOrders();
+    }
+  }
+
+  Future<void> _handleOrderStatusUpdate(
+    String orderId,
+    String action, {
+    String? reason,
+    bool isAutoCancel = false
+  }) async {
+    if (_orderLoadingStates[orderId] == true) {
+      print('Order $orderId is already being processed');
+      return;
+    }
+
+    setState(() {
+      _orderLoadingStates[orderId] = true;
+    });
+
     try {
-      print('Updating order: ID=$orderId, status=$status, reason=$reason');
-      setState(() => _isLoading = true);
+      print('Updating order $orderId with action: $action');
+      final updatedOrder = await _apiService.updateOrderStatus(orderId, action, reason);
       
-      await _apiService.updateOrderStatus(orderId, status, reason);
-      await _fetchOrders();
-      
-      if (mounted) {
+      if (!mounted) return;
+
+      final newStatus = updatedOrder['orderStatus'];
+      print('Order updated successfully. New status: $newStatus');
+
+      // Show success message only for manual actions
+      if (mounted && !isAutoCancel) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Order $status successfully'),
+            content: Text('Order ${_getActionMessage(action)}'),
             backgroundColor: Colors.green,
           ),
         );
       }
+
+      // Clear all caches to force fresh data
+      _orderCache.clear();
+      _lastFetchTime.clear();
+
+      // Handle tab switching and data refresh based on action
+      if (action.toLowerCase() == 'confirm') {
+        setState(() {
+          _activeTab = 'Accepted';
+          _orderLoadingStates[orderId] = false;
+        });
+        
+        await Future.wait([
+          _fetchOrdersForStatus('Placed'),
+          _fetchOrdersForStatus('Accepted'),
+        ]);
+      } else {
+        setState(() {
+          _orderLoadingStates[orderId] = false;
+        });
+        await _fetchOrdersForStatus(_activeTab);
+      }
+
+      _updateAllTabs();
+      _updateOrderCounts();
+
     } catch (e) {
       print('Error updating order status: $e');
-      if (mounted) {
+      if (mounted && !isAutoCancel) {
+        setState(() {
+          _orderLoadingStates[orderId] = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to update order: $e'),
+            content: Text('Failed to update order: ${e.toString()}'),
             backgroundColor: Colors.red,
           ),
         );
       }
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
     }
   }
 
-  List<Map<String, dynamic>> get _filteredOrders {
-    return _orders.where((order) {
-      final orderStatus = order['orderStatus']?.toString() ?? 'Placed';
-      switch (_activeTab) {
-        case 'pending':
-          return orderStatus == 'Placed' || orderStatus == 'Accepted';
-        case 'completed':
-          return orderStatus == 'Delivered';
-        case 'cancelled':
-          return orderStatus == 'Cancelled';
-        default:
-          return true;
+  Future<void> _updateAllTabs() async {
+    final allStatuses = ['Placed', 'Accepted', 'Delivered', 'Cancelled'];
+    
+    for (final status in allStatuses) {
+      if (status == _activeTab) continue; // Skip active tab as it's already updated
+      await _fetchOrdersForStatus(status);
+    }
+  }
+
+  String _getActionMessage(String action) {
+    switch (action.toLowerCase()) {
+      case 'confirm':
+        return 'accepted successfully';
+      case 'deliver':
+        return 'marked as delivered';
+      case 'cancel':
+        return 'cancelled';
+      default:
+        return 'updated';
+    }
+  }
+
+  void _updateOrderCounts() {
+    final counts = {
+      'Placed': _orderCache['Placed']?.length ?? 0,
+      'Accepted': _orderCache['Accepted']?.length ?? 0,
+      'Delivered': _orderCache['Delivered']?.length ?? 0,
+      'Cancelled': _orderCache['Cancelled']?.length ?? 0,
+    };
+    
+    print('Updated order counts: $counts');
+    
+    if (mounted) {
+      setState(() {
+        _orderCounts = counts;
+      });
+    }
+  }
+
+  String _calculateTotalRevenue() {
+    try {
+      final now = DateTime.now();
+      final currentMonth = DateTime(now.year, now.month);
+      
+      final deliveredOrders = _orderCache['Delivered'] ?? [];
+      print('Total delivered orders in cache: ${deliveredOrders.length}');
+      
+      double totalRevenue = 0.0;
+      int monthlyDeliveredCount = 0;
+      
+      for (var order in deliveredOrders) {
+        try {
+          // Try to get the delivery date from either updatedAt or createdAt
+          String? dateStr = order['updatedAt']?.toString() ?? order['createdAt']?.toString();
+          
+          if (dateStr == null) {
+            print('Order ${order['_id']} missing both updatedAt and createdAt');
+            continue;
+          }
+          
+          // Parse delivery date
+          final orderDate = DateTime.parse(dateStr);
+          final orderMonth = DateTime(orderDate.year, orderDate.month);
+          
+          // Check if order was delivered in current month
+          if (orderMonth.isAtSameMomentAs(currentMonth)) {
+            monthlyDeliveredCount++;
+            
+            // Get and validate amount
+            final amount = order['totalAmount'];
+            if (amount == null) {
+              print('Order has null amount: ${order['_id']}');
+              continue;
+            }
+            
+            // Convert amount to double
+            double orderAmount = 0.0;
+            if (amount is num) {
+              orderAmount = amount.toDouble();
+            } else if (amount is String) {
+              orderAmount = double.tryParse(amount) ?? 0.0;
+            }
+            
+            if (orderAmount <= 0) {
+              print('Order has invalid amount: ${order['_id']}, amount: $amount');
+              continue;
+            }
+            
+            totalRevenue += orderAmount;
+            print('Added order ${order['_id']} to revenue: ₹$orderAmount (Total: ₹$totalRevenue)');
+          }
+        } catch (e) {
+          print('Error processing order ${order['_id']}: $e');
+        }
       }
-    }).toList();
+      
+      print('Monthly delivered orders: $monthlyDeliveredCount');
+      print('Final total revenue for ${monthNames[now.month - 1]}: ₹${totalRevenue.toStringAsFixed(2)}');
+      return totalRevenue.toStringAsFixed(2);
+    } catch (e) {
+      print('Error calculating total revenue: $e');
+      return '0.00';
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Scaffold(body: LoadingScreen());
-    }
-
+    super.build(context);
+    
     // Show orders panel if orders are being viewed
     if (_showOrders) {
       return Scaffold(
@@ -367,14 +690,50 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
             _buildTabButtons(),
             const SizedBox(height: 16),
             Expanded(
-              child: _error != null
-                  ? Center(child: Text('Error: $_error'))
-                  : _filteredOrders.isEmpty
-                      ? Center(child: Text('No ${_activeTab} orders found'))
-                      : ListView.builder(
-                          itemCount: _filteredOrders.length,
-                          itemBuilder: (context, index) => _buildOrderCard(_filteredOrders[index]),
-                        ),
+              child: ValueListenableBuilder<String?>(
+                valueListenable: _errorNotifier,
+                builder: (context, error, _) {
+                  if (error != null) {
+                    return Center(child: Text(error));
+                  }
+                  
+                  final orders = _orderCache[_activeTab] ?? [];
+                  
+                  if (orders.isEmpty) {
+                    return Center(
+                      child: Text('No ${_activeTab} orders found'),
+                    );
+                  }
+                  
+                  return RefreshIndicator(
+                    onRefresh: _fetchOrders,
+                    color: AppTheme.primary,
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      itemCount: orders.length + 1, // +1 for loading indicator
+                      itemBuilder: (context, index) {
+                        if (index == orders.length) {
+                          return ValueListenableBuilder<bool>(
+                            valueListenable: _isLoadingNotifier,
+                            builder: (context, isLoading, _) {
+                              return isLoading
+                                ? const Center(
+                                    child: Padding(
+                                      padding: EdgeInsets.all(16.0),
+                                      child: CircularProgressIndicator(),
+                                    ),
+                                  )
+                                : const SizedBox.shrink();
+                            },
+                          );
+                        }
+                        return _buildOrderCard(orders[index]);
+                      },
+                    ),
+                  );
+                },
+              ),
             ),
           ],
         ),
@@ -386,70 +745,25 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
       );
     }
 
-    // Show main restaurant panel
+    // Optimized main restaurant panel
     return Scaffold(
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Card(
-              elevation: 4,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _restaurantData?['name'] ?? 'Restaurant Name',
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _restaurantData?['address'] ?? 'Address',
-                      style: const TextStyle(fontSize: 16),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Status: ${_restaurantData?['isActive'] ?? false ? 'Open' : 'Closed'}',
-                          style: const TextStyle(fontSize: 16),
-                        ),
-                        Switch(
-                          value: _restaurantData?['isActive'] ?? false,
-                          onChanged: (value) => _toggleRestaurantStatus(),
-                          activeColor: const Color(0xFFFAC744),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+      body: RefreshIndicator(
+        onRefresh: _fetchRestaurantData,
+        color: AppTheme.primary,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.all(16),
+              sliver: SliverList(
+                delegate: SliverChildListDelegate([
+                  _buildRestaurantCard(),
+                  const SizedBox(height: 16),
+                  _buildStatisticsCard(),
+                  const SizedBox(height: 16),
+                  _buildActionButtons(),
+                ]),
               ),
-            ),
-            const SizedBox(height: 16),
-            _buildActionButton(
-              icon: Icons.restaurant_menu,
-              label: 'Menu Management',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const EditMenuScreen()),
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildActionButton(
-              icon: Icons.receipt_long,
-              label: 'Orders',
-              onTap: () {
-                setState(() {
-                  _showOrders = true;
-                  _fetchOrders(); // Fetch orders when showing orders panel
-                });
-              },
             ),
           ],
         ),
@@ -458,6 +772,47 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
         isLoggedIn: _isLoggedIn,
         userRole: _userRole ?? '',
         onLogout: _handleLogout,
+      ),
+    );
+  }
+
+  Widget _buildRestaurantCard() {
+    return Card(
+      elevation: 4,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_restaurantData?['imageUrl'] != null)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: CachedNetworkImage(
+                  imageUrl: _restaurantData!['imageUrl'],
+                  placeholder: (context, url) => const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                  errorWidget: (context, url, error) => const Icon(Icons.error),
+                  fit: BoxFit.cover,
+                  height: 200,
+                  width: double.infinity,
+                ),
+              ),
+            const SizedBox(height: 16),
+            Text(
+              _restaurantData?['name'] ?? 'Restaurant Name',
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _restaurantData?['address'] ?? 'Address',
+              style: const TextStyle(fontSize: 16),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -534,9 +889,10 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        _buildTabButton('pending', 'Pending\nOrders'),
-        _buildTabButton('completed', 'Completed\nOrders'),
-        _buildTabButton('cancelled', 'Cancelled\nOrders'),
+        _buildTabButton('Placed', 'New\nOrders'),
+        _buildTabButton('Accepted', 'Accepted\nOrders'),
+        _buildTabButton('Delivered', 'Completed\nOrders'),
+        _buildTabButton('Cancelled', 'Cancelled\nOrders'),
       ],
     );
   }
@@ -544,7 +900,7 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
   Widget _buildTabButton(String tab, String label) {
     final isActive = _activeTab == tab;
     return TextButton(
-      onPressed: () => setState(() => _activeTab = tab),
+      onPressed: () => _onTabChanged(tab),
       style: TextButton.styleFrom(
         backgroundColor: isActive ? AppTheme.primary : Colors.transparent,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -561,12 +917,15 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
   }
 
   Widget _buildOrderCard(Map<String, dynamic> order) {
+    final orderId = order['_id'].toString();
+    final isLoading = _orderLoadingStates[orderId] ?? false;
+    
     final status = order['orderStatus']?.toString() ?? 'Placed';
     final items = List<Map<String, dynamic>>.from(order['items'] ?? []);
     final customer = order['customer'] as Map<String, dynamic>?;
-    final orderId = order['_id'].toString();
     final totalAmount = order['totalAmount']?.toString() ?? '0';
     final createdAt = DateTime.parse(order['createdAt'].toString());
+    final deliveryAddress = order['address']?.toString() ?? customer?['address']?.toString() ?? 'N/A';
     
     // Convert to Indian time (UTC+5:30)
     final indianTime = createdAt.add(const Duration(hours: 5, minutes: 30));
@@ -574,141 +933,132 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
         '${indianTime.hour.toString().padLeft(2, '0')}:'
         '${indianTime.minute.toString().padLeft(2, '0')}';
 
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return Opacity(
+      opacity: isLoading ? 0.6 : 1.0,
+      child: IgnorePointer(
+        ignoring: isLoading,
+        child: Card(
+          margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Order #${orderId.substring(orderId.length - 6)}',
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
-                _buildStatusChip(status),
-              ],
-            ),
-            const Divider(),
-            // Show time for all orders
-            Text(
-              'Received at: $formattedTime',
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: 8),
-            // Show customer details based on order status
-            if (customer != null) ...[
-              if (status == 'Placed') ...[
-                // Only show delivery address for pending orders
-                Text(
-                  'Delivery Address:',
-                  style: const TextStyle(fontWeight: FontWeight.w500),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Order #${orderId.substring(orderId.length - 6)}',
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                    _buildStatusChip(status),
+                  ],
                 ),
+                const Divider(),
+                // Show time for all orders
                 Text(
-                  customer['address'] ?? 'N/A',
+                  'Received at: $formattedTime',
                   style: TextStyle(
-                    color: Colors.grey[800],
-                    height: 1.3,
+                    color: Colors.grey[600],
+                    fontSize: 14,
                   ),
                 ),
-              ] else if (!['Cancelled'].contains(status)) ...[
-                // Show all customer details for accepted/delivered orders
-                Text(
-                  'Customer: ${customer['username'] ?? 'Anonymous'}',
-                  style: const TextStyle(fontWeight: FontWeight.w500),
-                ),
-                Text('Phone: ${customer['mobileNumber'] ?? 'N/A'}'),
-                Text(
-                  'Delivery Address:',
-                  style: const TextStyle(fontWeight: FontWeight.w500),
-                ),
-                Text(
-                  customer['address'] ?? 'N/A',
-                  style: TextStyle(
-                    color: Colors.grey[800],
-                    height: 1.3,
+                const SizedBox(height: 8),
+                // Show customer details based on order status
+                if (customer != null) ...[
+                  Text(
+                    'Customer: ${customer['username'] ?? 'Anonymous'}',
+                    style: const TextStyle(fontWeight: FontWeight.w500),
                   ),
-                ),
-              ],
-              const Divider(),
-            ],
-            // Order items
-            ...items.map((item) => ListTile(
-              title: Text(
-                item['itemName'] ?? 'Unknown Item',
-                style: const TextStyle(fontWeight: FontWeight.w500),
-              ),
-              subtitle: Text('Size: ${item['size']}'),
-              trailing: Text(
-                'x${item['quantity']}',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-            )),
-            const Divider(),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Total Amount:',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                Text(
-                  '₹$totalAmount',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                    color: AppTheme.primary,
+                  if (!['Cancelled'].contains(status)) 
+                    Text('Phone: ${customer['mobileNumber'] ?? 'N/A'}'),
+                  Text(
+                    'Delivery Address:',
+                    style: const TextStyle(fontWeight: FontWeight.w500),
                   ),
-                ),
-              ],
-            ),
-            if (status == 'Placed') ...[
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.check_circle),
-                    label: const Text('Accept'),
-                    onPressed: () => _handleOrderStatusUpdate(orderId, 'Accepted'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  Text(
+                    deliveryAddress,
+                    style: TextStyle(
+                      color: Colors.grey[800],
+                      height: 1.3,
                     ),
                   ),
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.cancel),
-                    label: const Text('Decline'),
-                    onPressed: () => _showDeclineDialog(orderId),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  const Divider(),
+                ],
+                // Order items
+                ...items.map((item) => ListTile(
+                  title: Text(
+                    item['itemName'] ?? 'Unknown Item',
+                    style: const TextStyle(fontWeight: FontWeight.w500),
+                  ),
+                  subtitle: Text('Size: ${item['size']}'),
+                  trailing: Text(
+                    'x${item['quantity']}',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                )),
+                const Divider(),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Total Amount:',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    Text(
+                      '₹$totalAmount',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: AppTheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
+                if (status == 'Placed') ...[
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.check_circle),
+                        label: const Text('Accept'),
+                        onPressed: () => _handleOrderStatusUpdate(orderId, 'confirm'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        ),
+                      ),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.cancel),
+                        label: const Text('Decline'),
+                        onPressed: () => _showDeclineDialog(orderId),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                if (status == 'Accepted') ...[
+                  const SizedBox(height: 16),
+                  Center(
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.local_shipping),
+                      label: const Text('Mark as Delivered'),
+                      onPressed: () => _handleOrderStatusUpdate(orderId, 'deliver'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                      ),
                     ),
                   ),
                 ],
-              ),
-            ],
-            if (status == 'Accepted') ...[
-              const SizedBox(height: 16),
-              Center(
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.local_shipping),
-                  label: const Text('Mark as Delivered'),
-                  onPressed: () => _handleOrderStatusUpdate(orderId, 'Delivered'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
-                  ),
-                ),
-              ),
-            ],
-          ],
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -716,8 +1066,9 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
 
   Widget _buildStatusChip(String status) {
     Color color;
+    String displayStatus = STATUS_DISPLAY[status] ?? status;
+    
     switch (status.toLowerCase()) {
-      case 'pending':
       case 'placed':
         color = Colors.orange;
         break;
@@ -735,9 +1086,130 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
     }
 
     return Chip(
-      label: Text(status),
-      backgroundColor: color,
-      labelStyle: const TextStyle(color: Colors.white),
+      label: Text(displayStatus),
+      backgroundColor: color.withOpacity(0.8),
+      labelStyle: const TextStyle(
+        color: Colors.white,
+        fontWeight: FontWeight.bold,
+      ),
+    );
+  }
+
+  String _calculateItemTotal(Map<String, dynamic> item) {
+    final quantity = item['quantity'] ?? 1;
+    final size = item['size'] ?? 'Regular';
+    num price = 0;
+    
+    // Debug print to see the item structure
+    print('Item data: $item');
+    
+    // Check if menuItem exists and has price information
+    if (item['menuItem'] != null && item['menuItem'] is Map) {
+      final menuItem = item['menuItem'] as Map<String, dynamic>;
+      
+      // Check for size-specific pricing
+      if (menuItem['sizes'] != null && menuItem['sizes'] is Map) {
+        price = menuItem['sizes'][size]?.toDouble() ?? menuItem['price']?.toDouble() ?? 0;
+      } else {
+        price = menuItem['price']?.toDouble() ?? 0;
+      }
+    }
+    
+    final total = price * quantity;
+    return total.toStringAsFixed(2); // Format to 2 decimal places
+  }
+
+  Widget _buildStatisticsCard() {
+    // Count orders by status for current month
+    final placedOrders = _orderCounts['Placed'] ?? 0;
+    final acceptedOrders = _orderCounts['Accepted'] ?? 0;
+    final deliveredOrders = _orderCounts['Delivered'] ?? 0;
+    final cancelledOrders = _orderCounts['Cancelled'] ?? 0;
+    
+    // Get current month name
+    final now = DateTime.now();
+    final currentMonthName = monthNames[now.month - 1];
+    
+    return Card(
+      elevation: 4,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '$currentMonthName Statistics',
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                _buildStatsCard(
+                  'Active Orders',
+                  (placedOrders + acceptedOrders).toString(),
+                  Icons.shopping_bag,
+                ),
+                const SizedBox(width: 16),
+                _buildStatsCard(
+                  'Revenue',
+                  '₹${_calculateTotalRevenue()}',
+                  Icons.payments,
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                _buildStatsCard(
+                  'Completed',
+                  deliveredOrders.toString(),
+                  Icons.check_circle,
+                ),
+                const SizedBox(width: 16),
+                _buildStatsCard(
+                  'Cancelled',
+                  cancelledOrders.toString(),
+                  Icons.cancel,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButtons() {
+    return Column(
+      children: [
+        _buildActionButton(
+          icon: Icons.restaurant_menu,
+          label: 'Edit Menu',
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => EditMenuScreen(
+                restaurantId: _restaurantData?['_id'],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        _buildActionButton(
+          icon: Icons.list_alt,
+          label: 'View Orders',
+          onTap: () => setState(() => _showOrders = true),
+        ),
+        const SizedBox(height: 8),
+        _buildActionButton(
+          icon: _isOpen ? Icons.store : Icons.store_outlined,
+          label: _isOpen ? 'Close Restaurant' : 'Open Restaurant',
+          onTap: _toggleRestaurantStatus,
+        ),
+      ],
     );
   }
 
@@ -768,9 +1240,9 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
           ),
           ElevatedButton(
             onPressed: () {
-              if (selectedReason != null) {
+              if (selectedReason != null && orderId != null) {
                 Navigator.pop(context);
-                _handleOrderStatusUpdate(orderId, 'Cancelled', selectedReason);
+                _handleOrderStatusUpdate(orderId!, 'cancel');
               }
             },
             child: const Text('Confirm'),
@@ -780,34 +1252,171 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> {
     );
   }
 
-  String _calculateItemTotal(Map<String, dynamic> item) {
-    final quantity = item['quantity'] ?? 1;
-    final size = item['size'] ?? 'Regular';
-    num price = 0;
-    
-    // Debug print to see the item structure
-    print('Item data: $item');
-    
-    // Check if menuItem exists and has price information
-    if (item['menuItem'] != null && item['menuItem'] is Map) {
-      final menuItem = item['menuItem'] as Map<String, dynamic>;
-      
-      // Check for size-specific pricing
-      if (menuItem['sizes'] != null && menuItem['sizes'] is Map) {
-        price = menuItem['sizes'][size]?.toDouble() ?? menuItem['price']?.toDouble() ?? 0;
-      } else {
-        price = menuItem['price']?.toDouble() ?? 0;
-      }
+  void _initializeWebSocket() {
+    if (_restaurantData == null) {
+      print('Restaurant data not available for WebSocket initialization');
+      return;
     }
-    
-    final total = price * quantity;
-    return total.toStringAsFixed(2); // Format to 2 decimal places
+
+    try {
+      final wsUrl = ApiService.useProductionUrl
+          ? 'wss://mujbites-app.onrender.com'
+          : Platform.isAndroid
+              ? 'ws://10.0.2.2:5000'
+              : 'ws://localhost:5000';
+
+      print('Initializing WebSocket connection to: $wsUrl/orders/${_restaurantData!['_id']}');
+      
+      // Close existing connections
+      _webSocket?.sink.close();
+      _webSocketSubscription?.cancel();
+      
+      _webSocket = WebSocketChannel.connect(
+        Uri.parse('$wsUrl/orders/${_restaurantData!['_id']}'),
+      );
+
+      _webSocketSubscription = _webSocket?.stream.listen(
+        (message) {
+          print('WebSocket message received: $message');
+          try {
+            final data = jsonDecode(message);
+            if (data['type'] == 'orderUpdate' || data['type'] == 'newOrder') {
+              print('Order update received for order: ${data['orderId']}');
+              
+              // Reset reconnect attempts on successful message
+              _reconnectAttempts = 0;
+              
+              // Force refresh current tab immediately
+              _fetchOrders(forceRefresh: true);
+              
+              // Play notification sound for new orders
+              if (data['type'] == 'newOrder' && mounted) {
+                _notificationService.playNewOrderSound();
+                
+                // Show in-app notification
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('New order received!'),
+                    backgroundColor: Colors.green,
+                    duration: Duration(seconds: 3),
+                  ),
+                );
+              }
+            }
+          } catch (e) {
+            print('Error processing WebSocket message: $e');
+          }
+        },
+        onError: (error) {
+          print('WebSocket error: $error');
+          _handleWebSocketReconnection();
+        },
+        onDone: () {
+          print('WebSocket connection closed');
+          _handleWebSocketReconnection();
+        },
+      );
+
+      print('WebSocket connected successfully');
+    } catch (e) {
+      print('Error initializing WebSocket: $e');
+      _handleWebSocketReconnection();
+    }
   }
 
-  String _calculateTotalRevenue() {
-    return _orders
-        .where((o) => o['orderStatus'] == 'Delivered')
-        .fold(0.0, (sum, order) => sum + (order['totalAmount'] ?? 0))
-        .toStringAsFixed(2);
+  void _handleWebSocketReconnection() {
+    if (_isDisposed) return;
+    
+    _webSocketSubscription?.cancel();
+    _webSocket?.sink.close();
+    
+    // Implement exponential backoff
+    if (_reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      final delay = Duration(seconds: RECONNECT_DELAY.inSeconds * (_reconnectAttempts + 1));
+      _reconnectAttempts++;
+      
+      print('Attempting to reconnect WebSocket (Attempt $_reconnectAttempts) after ${delay.inSeconds} seconds');
+      
+      Future.delayed(delay, () {
+        if (!_isDisposed) {
+          print('Executing reconnection attempt $_reconnectAttempts');
+          _initializeWebSocket();
+          _fetchOrders(forceRefresh: true);
+        }
+      });
+    } else {
+      print('Max reconnection attempts reached. Manual refresh required.');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Connection lost. Pull to refresh.'),
+            duration: Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Retry',
+              onPressed: () {
+                _reconnectAttempts = 0;
+                _initializeWebSocket();
+                _fetchOrders(forceRefresh: true);
+              },
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  void _onTabChanged(String newTab) {
+    if (_activeTab != newTab) {
+      setState(() {
+        _activeTab = newTab;
+        // Reset error state on tab change
+        _error = null;
+      });
+      // Fetch orders for the new tab
+      _fetchOrders(forceRefresh: newTab == 'Placed');
+    }
+  }
+
+  bool _isOrderFromToday(Map<String, dynamic> order) {
+    try {
+      final orderDate = DateTime.parse(order['createdAt'].toString()).add(const Duration(hours: 5, minutes: 30));
+      final now = DateTime.now();
+      return orderDate.year == now.year && 
+             orderDate.month == now.month && 
+             orderDate.day == now.day;
+    } catch (e) {
+      print('Error checking order date: $e');
+      return false;
+    }
+  }
+
+  Future<void> _checkAndCancelOldOrders() async {
+    if (!mounted || _restaurantData == null) return;
+
+    try {
+      final placedOrders = _orderCache['Placed'] ?? [];
+      final now = DateTime.now();
+      
+      for (var order in placedOrders) {
+        try {
+          final orderDate = DateTime.parse(order['createdAt'].toString()).add(const Duration(hours: 5, minutes: 30));
+          final orderAge = now.difference(orderDate);
+          
+          if (orderAge > ORDER_EXPIRY_DURATION) {
+            print('Auto-cancelling old order: ${order['_id']}');
+            await _handleOrderStatusUpdate(
+              order['_id'].toString(),
+              'cancel',
+              reason: 'Order expired - No response from restaurant',
+              isAutoCancel: true
+            );
+          }
+        } catch (e) {
+          print('Error processing order for auto-cancel: $e');
+        }
+      }
+    } catch (e) {
+      print('Error in auto-cancel check: $e');
+    }
   }
 } 

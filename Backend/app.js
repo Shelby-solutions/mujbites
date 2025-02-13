@@ -2,51 +2,36 @@ const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
 require('dotenv').config();
+const helmet = require('helmet');
+const compression = require('compression');
+const rateLimit = require('express-rate-limit');
+const { requestLogger, errorLogger } = require('./utils/logger');
 
 const app = express();
 
-// CORS configuration
-app.use(cors({
-  origin: [
-    'http://localhost:3000',
-      'http://localhost',
-      'http://10.0.2.2:5000',
-      'http://localhost:5000',
-      'http://127.0.0.1:5000',
-      'ws://localhost:5000',
-      'https://mujbites-app.onrender.com',
-      'wss://mujbites-app.onrender.com',
-      'https://mujbites-app.netlify.app',
-      'http://localhost:3001',
-      'http://localhost:5173',
-      'capacitor://localhost',
-      'ionic://localhost',
-      'http://localhost:49421',
-      'http://localhost:*',
-      'https://localhost:*',
-      'https://mujbites-app.vercel.app',
-      'https://mujbites-app-*',
-      'https://*.mujbites-app.com',
-      'https://*.onrender.com'
-  ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
-}));
+// Security middleware
+app.use(helmet());
+app.use(cors());
+app.use(compression());
 
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-// Request logger
-app.use((req, res, next) => {
-  console.log('Incoming request:', {
-    method: req.method,
-    path: req.path,
-    originalUrl: req.originalUrl
-  });
-  next();
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
 });
+
+// Apply rate limiting to all routes
+app.use(limiter);
+
+// Request parsing
+app.use(express.json({ limit: '10kb' }));
+app.use(express.urlencoded({ extended: true, limit: '10kb' }));
+
+// Logging middleware
+app.use(requestLogger);
 
 // Import routes
 const recommendationRoutes = require('./routes/recommendationRoutes');
@@ -88,26 +73,31 @@ app.get('/debug/routes', (req, res) => {
   res.json({ routes });
 });
 
-// 404 handler
-app.use((req, res) => {
-  console.log('404 Not Found:', req.originalUrl);
-  res.status(404).json({
-    success: false,
-    message: 'Route not found',
-    path: req.originalUrl
+// Error handling middleware
+app.use(errorLogger);
+
+app.use((err, req, res, next) => {
+  const statusCode = err.statusCode || 500;
+  const status = err.status || 'error';
+
+  res.status(statusCode).json({
+    status,
+    error: {
+      message: err.message,
+      code: err.code,
+      ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
+    },
   });
 });
 
-// Error handler
-app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  
-  // Don't leak error details in production
-  const isProd = process.env.NODE_ENV === 'production';
-  res.status(500).json({
-    success: false,
-    message: isProd ? 'Internal server error' : err.message,
-    ...(isProd ? {} : { stack: err.stack })
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    status: 'error',
+    error: {
+      message: 'Route not found',
+      code: 'NOT_FOUND',
+    },
   });
 });
 

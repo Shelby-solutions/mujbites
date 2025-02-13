@@ -1,14 +1,21 @@
 buildscript {
     ext.kotlin_version = '1.9.0'
+    ext {
+        compileSdkVersion = 34
+        targetSdkVersion = 34
+        javaVersion = JavaVersion.VERSION_17
+    }
+    
     repositories {
         google()
         mavenCentral()
     }
 
     dependencies {
-        classpath 'com.android.tools.build:gradle:7.3.0'
+        classpath 'com.android.tools.build:gradle:8.1.3'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
         classpath 'com.google.gms:google-services:4.4.0'
+        classpath 'com.google.firebase:firebase-crashlytics-gradle:2.9.9'
     }
 }
 
@@ -16,15 +23,13 @@ allprojects {
     repositories {
         google()
         mavenCentral()
-        maven { url 'https://jitpack.io' } // Add JitPack for additional dependencies if needed
+        maven { url "https://jitpack.io" }
     }
 }
 
-rootProject.buildDir = "../build"
-
+rootProject.buildDir = '../build'
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
-    project.evaluationDependsOn(":app")
 }
 
 tasks.register("clean", Delete) {
