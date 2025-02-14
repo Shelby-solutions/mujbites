@@ -1,3 +1,11 @@
+plugins {
+    id 'com.android.application'
+    id 'kotlin-android'
+    id 'com.google.gms.google-services'
+    id 'com.google.firebase.crashlytics'
+    id 'dev.flutter.flutter-gradle-plugin'
+}
+
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
 if (localPropertiesFile.exists()) {
@@ -21,25 +29,19 @@ if (flutterVersionName == null) {
     flutterVersionName = '1.0.2'
 }
 
-apply plugin: 'com.android.application'
-apply plugin: 'kotlin-android'
-apply plugin: 'com.google.gms.google-services'
-apply plugin: 'com.google.firebase.crashlytics'
-apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
-
 android {
     namespace "com.mujbites.mujbites"
-    compileSdkVersion 34
+    compileSdkVersion rootProject.ext.compileSdkVersion
     ndkVersion flutter.ndkVersion
 
     compileOptions {
         coreLibraryDesugaringEnabled true
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        sourceCompatibility rootProject.ext.javaVersion
+        targetCompatibility rootProject.ext.javaVersion
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
+        jvmTarget = rootProject.ext.javaVersion.toString()
     }
 
     sourceSets {
@@ -48,8 +50,8 @@ android {
 
     defaultConfig {
         applicationId "com.mujbites.mujbites"
-        minSdkVersion 21
-        targetSdkVersion 34
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
@@ -70,7 +72,7 @@ android {
     buildTypes {
         release {
             signingConfig signingConfigs.release
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
             minifyEnabled true
             shrinkResources true
             
@@ -108,19 +110,33 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:1.2.2'
-    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
-    
-    // Firebase Dependencies
-    implementation platform('com.google.firebase:firebase-bom:32.7.1')
-    implementation 'com.google.firebase:firebase-analytics-ktx'
-    implementation 'com.google.firebase:firebase-messaging-ktx'
-    implementation 'com.google.firebase:firebase-crashlytics-ktx'
-    
-    // AndroidX Dependencies
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlin_version"
     implementation 'androidx.window:window:1.0.0'
     implementation 'androidx.window:window-java:1.0.0'
+    implementation 'com.google.android.gms:play-services-tasks:18.1.0'
+    implementation('com.google.android.play:core:1.10.3') {
+        exclude group: 'com.google.android.play', module: 'app-update'
+    }
+    implementation('com.google.android.play:feature-delivery:2.1.0') {
+        exclude group: 'com.google.android.play', module: 'core'
+    }
+    implementation('com.google.android.play:core-common:2.0.3') {
+        exclude group: 'com.google.android.play', module: 'core'
+    }
+    implementation 'com.google.firebase:firebase-analytics'
+    implementation 'com.google.firebase:firebase-messaging'
+    implementation 'com.google.firebase:firebase-crashlytics'
+    
+    // AndroidX Dependencies
     implementation 'androidx.multidex:multidex:2.0.1'
     implementation 'androidx.work:work-runtime-ktx:2.8.1'
+}
+
+configurations.all {
+    exclude group: 'com.google.android.play', module: 'core'
+    exclude group: 'com.google.android.play', module: 'app-update'
+    exclude group: 'com.google.android.play', module: 'feature-delivery'
+    exclude group: 'com.google.android.play', module: 'core-common'
 }
 
 gradle.projectsEvaluated {
@@ -128,3 +144,6 @@ gradle.projectsEvaluated {
         options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation"
     }
 }
+
+// Add ProGuard rules for Play Core libraries
+android.buildTypes.release.proguardFiles += new File('proguard-play-core.pro')

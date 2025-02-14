@@ -5,11 +5,15 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const session = require('express-session');
+const MongoStore = require('connect-mongo');
 const http = require('http');
 const websocketService = require('./services/websocketService');
 const auth = require('./middleware/authMiddleware');
 const Cart = require('./models/Cart');
 const recommendationRoutes = require('./routes/recommendationRoutes');
+
+// Set mongoose strictQuery before connecting
+mongoose.set('strictQuery', false);
 
 dotenv.config();
 
@@ -68,12 +72,17 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Logging middleware
 app.use(morgan('dev'));
 
-// Session middleware with secure configuration
+// Session middleware with secure configuration and MongoStore
 app.use(
   session({
     secret: process.env.SESSION_SECRET || 'your-secret-key',
     resave: false,
     saveUninitialized: false,
+    store: MongoStore.create({
+      mongoUrl: process.env.MONGODB_URI || process.env.MONGO_URI,
+      ttl: 24 * 60 * 60, // Session TTL (1 day)
+      touchAfter: 24 * 3600 // Time period in seconds between session updates
+    }),
     cookie: { 
       secure: process.env.NODE_ENV === 'production',
       sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
@@ -207,6 +216,15 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/users', recaptchaRouter);
 app.use('/api/cart', cartRoutes);
 app.use('/api/recommendations', recommendationRoutes);
+
+// Root route handler
+app.get('/', (req, res) => {
+  res.status(200).json({
+    message: 'MujBites API is running',
+    version: '1.0.0',
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
 
 // Health check route with detailed status
 app.get('/health', (req, res) => {
