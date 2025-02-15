@@ -2,7 +2,7 @@ const admin = require('firebase-admin');
 const logger = require('../utils/logger');
 const { createHash } = require('crypto');
 const User = require('../models/user');
-const Restaurant = require('../models/restaurant');
+const Restaurant = require('../models/restaurantModel');
 require('dotenv').config();
 
 // Initialize Firebase Admin only if credentials are available
