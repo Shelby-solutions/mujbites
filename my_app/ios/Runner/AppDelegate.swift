@@ -2,6 +2,7 @@ import Flutter
 import UIKit
 import FirebaseCore
 import FirebaseMessaging
+import FirebaseAuth
 import UserNotifications
 
 @main
@@ -10,7 +11,7 @@ import UserNotifications
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    // Configure Firebase
+    // Configure Firebase first
     FirebaseApp.configure()
     print("Firebase configured")
     
@@ -18,9 +19,10 @@ import UserNotifications
     Messaging.messaging().delegate = self
     print("Messaging delegate set")
     
-    // Request permission for notifications with provisional authorization
     if #available(iOS 10.0, *) {
+      // Set notification delegate
       UNUserNotificationCenter.current().delegate = self
+      
       let authOptions: UNAuthorizationOptions = [.alert, .badge, .sound, .provisional, .criticalAlert]
       UNUserNotificationCenter.current().requestAuthorization(
         options: authOptions,
@@ -30,16 +32,22 @@ import UserNotifications
             print("Notification authorization error: \(error.localizedDescription)")
           }
           
-          // Get current settings to verify configuration
-          UNUserNotificationCenter.current().getNotificationSettings { settings in
-            print("Notification settings:")
-            print("- Authorization status: \(settings.authorizationStatus.rawValue)")
-            print("- Alert setting: \(settings.alertSetting.rawValue)")
-            print("- Sound setting: \(settings.soundSetting.rawValue)")
-            print("- Badge setting: \(settings.badgeSetting.rawValue)")
-            print("- Notification Center setting: \(settings.notificationCenterSetting.rawValue)")
-            print("- Critical Alert setting: \(settings.criticalAlertSetting.rawValue)")
-            print("- Show previews setting: \(settings.showPreviewsSetting.rawValue)")
+          DispatchQueue.main.async {
+            // Register for remote notifications after authorization
+            application.registerForRemoteNotifications()
+            print("Registered for remote notifications")
+            
+            // Get current settings to verify configuration
+            UNUserNotificationCenter.current().getNotificationSettings { settings in
+              print("Notification settings:")
+              print("- Authorization status: \(settings.authorizationStatus.rawValue)")
+              print("- Alert setting: \(settings.alertSetting.rawValue)")
+              print("- Sound setting: \(settings.soundSetting.rawValue)")
+              print("- Badge setting: \(settings.badgeSetting.rawValue)")
+              print("- Notification Center setting: \(settings.notificationCenterSetting.rawValue)")
+              print("- Critical Alert setting: \(settings.criticalAlertSetting.rawValue)")
+              print("- Show previews setting: \(settings.showPreviewsSetting.rawValue)")
+            }
           }
         }
       )
@@ -47,11 +55,8 @@ import UserNotifications
       let settings: UIUserNotificationSettings =
         UIUserNotificationSettings(types: [.alert, .badge, .sound], categories: nil)
       application.registerUserNotificationSettings(settings)
+      application.registerForRemoteNotifications()
     }
-    
-    // Register for remote notifications
-    application.registerForRemoteNotifications()
-    print("Registered for remote notifications")
     
     GeneratedPluginRegistrant.register(with: self)
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
@@ -61,12 +66,24 @@ import UserNotifications
   override func application(_ application: UIApplication,
                           didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
     print("Received APNS token")
+    
+    // Set APNS token first
     Messaging.messaging().apnsToken = deviceToken
     
     // Convert token to string for logging
     let tokenParts = deviceToken.map { data in String(format: "%02.2hhx", data) }
     let token = tokenParts.joined()
     print("APNS token: \(token)")
+    
+    // Request FCM token after APNS token is set
+    Messaging.messaging().token { token, error in
+      if let error = error {
+        print("Error fetching FCM token: \(error.localizedDescription)")
+      }
+      if let token = token {
+        print("FCM token successfully retrieved: \(token)")
+      }
+    }
     
     super.application(application, didRegisterForRemoteNotificationsWithDeviceToken: deviceToken)
   }
@@ -85,45 +102,22 @@ import UserNotifications
     super.application(application, didFailToRegisterForRemoteNotificationsWithError: error)
   }
 
-  // Handle receiving notification in background
+  // Forward remote notifications to Firebase Auth
   override func application(_ application: UIApplication,
-                          didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+                          didReceiveRemoteNotification notification: [AnyHashable : Any],
                           fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-    print("Received background notification: \(userInfo)")
+    print("Received remote notification: \(notification)")
     
-    Messaging.messaging().appDidReceiveMessage(userInfo)
-    
-    // Handle the notification in background
-    if application.applicationState == .background || application.applicationState == .inactive {
-      // Schedule a local notification to show in the background
-      if #available(iOS 10.0, *) {
-        let content = UNMutableNotificationContent()
-        content.title = userInfo["title"] as? String ?? "New Order"
-        content.body = userInfo["body"] as? String ?? "You have a new order!"
-        content.sound = UNNotificationSound.default
-        content.userInfo = userInfo
-        
-        // Add thread identifier for grouping
-        content.threadIdentifier = "new_orders"
-        
-        // Set interruption level for time-sensitive notifications
-        if #available(iOS 15.0, *) {
-          content.interruptionLevel = .timeSensitive
-        }
-        
-        let request = UNNotificationRequest(identifier: UUID().uuidString,
-                                          content: content,
-                                          trigger: nil)
-        
-        UNUserNotificationCenter.current().add(request) { error in
-          if let error = error {
-            print("Error showing background notification: \(error.localizedDescription)")
-          }
-        }
-      }
+    if Auth.auth().canHandleNotification(notification) {
+      print("Firebase Auth handling notification")
+      completionHandler(.noData)
+      return
     }
     
-    completionHandler(.newData)
+    // If Auth doesn't handle it, let the parent class handle it
+    super.application(application,
+                     didReceiveRemoteNotification: notification,
+                     fetchCompletionHandler: completionHandler)
   }
 }
 

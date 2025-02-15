@@ -27,6 +27,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'services/firebase_service.dart';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -156,9 +157,8 @@ void main() async {
   await DefaultFirebaseOptions.loadEnv();
   
   // Initialize Firebase
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  final firebaseService = FirebaseService();
+  await firebaseService.initialize();
   
   await UserPreferences.init();
   

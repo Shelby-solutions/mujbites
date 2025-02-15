@@ -4,24 +4,23 @@ import FirebaseCore
 import FirebaseMessaging
 import UserNotifications
 
-@UIApplicationMain
+@main
 @objc class AppDelegate: FlutterAppDelegate {
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    // Configure Firebase
+    // Configure Firebase first
     FirebaseApp.configure()
-    print("Firebase configured successfully")
+    print("Firebase configured")
     
-    // Set messaging delegate before requesting permissions
+    // Set messaging delegate
     Messaging.messaging().delegate = self
     print("Messaging delegate set")
     
     if #available(iOS 10.0, *) {
-      // Set notification delegate first
+      // Set notification delegate
       UNUserNotificationCenter.current().delegate = self
-      print("UNUserNotificationCenter delegate set")
       
       let authOptions: UNAuthorizationOptions = [.alert, .badge, .sound, .provisional, .criticalAlert]
       UNUserNotificationCenter.current().requestAuthorization(
@@ -113,4 +112,4 @@ extension AppDelegate: MessagingDelegate {
       userInfo: dataDict
     )
   }
-} 
+}

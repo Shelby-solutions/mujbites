@@ -4,6 +4,9 @@ import '../theme/app_theme.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:ui';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:pinput/pinput.dart';
+import 'dart:async';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key});
@@ -18,11 +21,22 @@ class _SignupScreenState extends State<SignupScreen> with SingleTickerProviderSt
   final _mobileController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+  final _otpController = TextEditingController();
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   bool _agreeToTerms = false;
   String? _errorMessage;
+  bool _isPhoneVerified = false;
+  String? _verificationId;
+  bool _showOtpField = false;
+  int? _resendToken;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  
+  // Timer related variables
+  Timer? _resendTimer;
+  int _timeLeft = 30;
+  bool _canResendOTP = false;
 
   final ApiService _apiService = ApiService();
   
@@ -59,6 +73,27 @@ class _SignupScreenState extends State<SignupScreen> with SingleTickerProviderSt
     _fadeController.forward();
   }
 
+  void _startResendTimer() {
+    setState(() {
+      _timeLeft = 30;
+      _canResendOTP = false;
+    });
+
+    _resendTimer?.cancel();
+    _resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_timeLeft > 0) {
+        setState(() {
+          _timeLeft--;
+        });
+      } else {
+        setState(() {
+          _canResendOTP = true;
+        });
+        timer.cancel();
+      }
+    });
+  }
+
   void _showError(String message) {
     setState(() {
       _errorMessage = message;
@@ -68,10 +103,93 @@ class _SignupScreenState extends State<SignupScreen> with SingleTickerProviderSt
     );
   }
 
+  Future<void> _verifyPhone() async {
+    if (_mobileController.text.isEmpty) {
+      _showError('Please enter your mobile number');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      await _auth.verifyPhoneNumber(
+        phoneNumber: '+91${_mobileController.text}',
+        verificationCompleted: (PhoneAuthCredential credential) async {
+          // Auto-verification on Android
+          await _auth.signInWithCredential(credential);
+          setState(() {
+            _isPhoneVerified = true;
+            _showOtpField = false;
+          });
+        },
+        verificationFailed: (FirebaseAuthException e) {
+          _showError(e.message ?? 'Verification failed');
+          setState(() => _isLoading = false);
+        },
+        codeSent: (String verificationId, int? resendToken) {
+          setState(() {
+            _verificationId = verificationId;
+            _resendToken = resendToken;
+            _showOtpField = true;
+            _isLoading = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('OTP sent successfully')),
+          );
+          _startResendTimer(); // Start the timer when OTP is sent
+        },
+        codeAutoRetrievalTimeout: (String verificationId) {
+          setState(() {
+            _verificationId = verificationId;
+            _isLoading = false;
+          });
+        },
+        forceResendingToken: _resendToken,
+      );
+    } catch (e) {
+      _showError('Error sending OTP: $e');
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _verifyOTP() async {
+    if (_otpController.text.length != 6) {
+      _showError('Please enter a valid 6-digit OTP');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final credential = PhoneAuthProvider.credential(
+        verificationId: _verificationId!,
+        smsCode: _otpController.text,
+      );
+
+      await _auth.signInWithCredential(credential);
+      setState(() {
+        _isPhoneVerified = true;
+        _showOtpField = false;
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Phone number verified successfully')),
+      );
+    } catch (e) {
+      _showError('Invalid OTP. Please try again.');
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
   void _handleSignup() async {
     if (!_formKey.currentState!.validate()) return;
     if (!_agreeToTerms) {
       _showError('Please agree to the terms and conditions');
+      return;
+    }
+    if (!_isPhoneVerified) {
+      _showError('Please verify your phone number first');
       return;
     }
 
@@ -131,7 +249,9 @@ class _SignupScreenState extends State<SignupScreen> with SingleTickerProviderSt
     _mobileController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _otpController.dispose();
     _fadeController.dispose();
+    _resendTimer?.cancel(); // Cancel timer when disposing
     super.dispose();
   }
 
@@ -248,33 +368,128 @@ class _SignupScreenState extends State<SignupScreen> with SingleTickerProviderSt
                                   return null;
                                 },
                               ),
-                              SizedBox(height: contentPadding),
-                              _buildFormField(
-                                controller: _mobileController,
-                                label: 'Phone Number',
-                                icon: Icons.phone_outlined,
-                                keyboardType: TextInputType.phone,
-                                validator: (value) {
-                                  if (value == null || value.isEmpty) {
-                                    return 'Please enter your phone number';
-                                  }
-                                  if (value.length != 10) {
-                                    return 'Phone number must be 10 digits';
-                                  }
-                                  return null;
-                                },
+                              const SizedBox(height: 16),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _buildFormField(
+                                      controller: _mobileController,
+                                      label: 'Mobile Number',
+                                      icon: Icons.phone_android,
+                                      keyboardType: TextInputType.phone,
+                                      enabled: !_isPhoneVerified,
+                                      validator: (value) {
+                                        if (value == null || value.isEmpty) {
+                                          return 'Please enter your mobile number';
+                                        }
+                                        if (value.length != 10) {
+                                          return 'Please enter a valid 10-digit mobile number';
+                                        }
+                                        return null;
+                                      },
+                                    ),
+                                  ),
+                                  if (!_isPhoneVerified) ...[
+                                    const SizedBox(width: 8),
+                                    ElevatedButton(
+                                      onPressed: _isLoading ? null : _verifyPhone,
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: AppTheme.primary,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                          vertical: 12,
+                                        ),
+                                      ),
+                                      child: _isLoading
+                                          ? const SizedBox(
+                                              width: 20,
+                                              height: 20,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                valueColor: AlwaysStoppedAnimation<Color>(
+                                                  Colors.white,
+                                                ),
+                                              ),
+                                            )
+                                          : const Text('Verify'),
+                                    ),
+                                  ],
+                                ],
                               ),
-                              SizedBox(height: contentPadding),
+                              if (_showOtpField) ...[
+                                const SizedBox(height: 16),
+                                Center(
+                                  child: Pinput(
+                                    length: 6,
+                                    controller: _otpController,
+                                    onCompleted: (pin) => _verifyOTP(),
+                                    defaultPinTheme: PinTheme(
+                                      width: 56,
+                                      height: 56,
+                                      textStyle: const TextStyle(
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        border: Border.all(color: Colors.grey),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Center(
+                                  child: _canResendOTP
+                                    ? TextButton(
+                                        onPressed: _isLoading ? null : _verifyPhone,
+                                        child: const Text('Resend OTP'),
+                                      )
+                                    : Text(
+                                        'Resend OTP in $_timeLeft seconds',
+                                        style: TextStyle(
+                                          color: Colors.grey[600],
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                ),
+                              ],
+                              if (_isPhoneVerified)
+                                const Padding(
+                                  padding: EdgeInsets.only(top: 8),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.check_circle, color: Colors.green, size: 16),
+                                      SizedBox(width: 4),
+                                      Text(
+                                        'Phone number verified',
+                                        style: TextStyle(
+                                          color: Colors.green,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              const SizedBox(height: 16),
                               _buildFormField(
                                 controller: _passwordController,
                                 label: 'Password',
                                 icon: Icons.lock_outline,
                                 obscureText: _obscurePassword,
-                                showPasswordToggle: true,
-                                onTogglePassword: () => setState(() => _obscurePassword = !_obscurePassword),
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _obscurePassword ? Icons.visibility : Icons.visibility_off,
+                                    color: Colors.grey,
+                                  ),
+                                  onPressed: () {
+                                    setState(() {
+                                      _obscurePassword = !_obscurePassword;
+                                    });
+                                  },
+                                ),
                                 validator: (value) {
                                   if (value == null || value.isEmpty) {
-                                    return 'Please enter your password';
+                                    return 'Please enter a password';
                                   }
                                   if (value.length < 6) {
                                     return 'Password must be at least 6 characters';
@@ -282,221 +497,115 @@ class _SignupScreenState extends State<SignupScreen> with SingleTickerProviderSt
                                   return null;
                                 },
                               ),
-                              SizedBox(height: contentPadding),
+                              const SizedBox(height: 16),
                               _buildFormField(
                                 controller: _confirmPasswordController,
                                 label: 'Confirm Password',
                                 icon: Icons.lock_outline,
                                 obscureText: _obscureConfirmPassword,
-                                showPasswordToggle: true,
-                                onTogglePassword: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _obscureConfirmPassword ? Icons.visibility : Icons.visibility_off,
+                                    color: Colors.grey,
+                                  ),
+                                  onPressed: () {
+                                    setState(() {
+                                      _obscureConfirmPassword = !_obscureConfirmPassword;
+                                    });
+                                  },
+                                ),
                                 validator: (value) {
-                                  if (value == null || value.isEmpty) {
-                                    return 'Please confirm your password';
-                                  }
                                   if (value != _passwordController.text) {
                                     return 'Passwords do not match';
                                   }
                                   return null;
                                 },
                               ),
-                              SizedBox(height: contentPadding),
-
-                              // Enhanced Terms Checkbox
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 8,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Colors.grey[50],
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: Colors.grey[200]!,
-                                    width: 1,
+                              const SizedBox(height: 16),
+                              Row(
+                                children: [
+                                  Checkbox(
+                                    value: _agreeToTerms,
+                                    onChanged: (value) {
+                                      setState(() {
+                                        _agreeToTerms = value ?? false;
+                                      });
+                                    },
+                                    activeColor: AppTheme.primary,
                                   ),
-                                ),
-                                child: Row(
-                                  children: [
-                                    SizedBox(
-                                      height: 24,
-                                      width: 24,
-                                      child: Checkbox(
-                                        value: _agreeToTerms,
-                                        onChanged: (value) => setState(() => _agreeToTerms = value ?? false),
-                                        activeColor: AppTheme.primary,
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(4),
+                                  Expanded(
+                                    child: GestureDetector(
+                                      onTap: _launchTerms,
+                                      child: RichText(
+                                        text: TextSpan(
+                                          text: 'I agree to the ',
+                                          style: TextStyle(color: Colors.grey[600]),
+                                          children: [
+                                            TextSpan(
+                                              text: 'Terms and Conditions',
+                                              style: TextStyle(
+                                                color: AppTheme.primary,
+                                                decoration: TextDecoration.underline,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: GestureDetector(
-                                        onTap: _launchTerms,
-                                        child: Text(
-                                          'I agree to the terms and conditions',
-                                          style: GoogleFonts.montserrat(
-                                            color: AppTheme.primary,
-                                            fontWeight: FontWeight.w500,
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
-
-                              // Enhanced Error Display
-                              if (_errorMessage != null) ...[
-                                const SizedBox(height: 16),
-                                Container(
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: Colors.red[50],
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: Colors.red[100]!,
-                                      width: 1,
-                                    ),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Icons.error_outline,
-                                        color: Colors.red[400],
-                                        size: 20,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(
-                                          _errorMessage!,
-                                          style: GoogleFonts.montserrat(
-                                            color: Colors.red[700],
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-
-                              // Enhanced Sign Up Button
-                              SizedBox(height: contentPadding),
+                              const SizedBox(height: 24),
                               SizedBox(
                                 width: double.infinity,
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 300),
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(16),
-                                    gradient: LinearGradient(
-                                      colors: _isLoading
-                                          ? [Colors.grey[300]!, Colors.grey[400]!]
-                                          : [AppTheme.primary, AppTheme.primary.withOpacity(0.8)],
+                                child: ElevatedButton(
+                                  onPressed: _isLoading ? null : _handleSignup,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: AppTheme.primary,
+                                    padding: const EdgeInsets.symmetric(vertical: 16),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
                                     ),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: AppTheme.primary.withOpacity(0.3),
-                                        blurRadius: 12,
-                                        offset: const Offset(0, 6),
-                                      ),
-                                    ],
                                   ),
-                                  child: ElevatedButton(
-                                    onPressed: _isLoading ? null : _handleSignup,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.transparent,
-                                      foregroundColor: Colors.black87,
-                                      elevation: 0,
-                                      padding: EdgeInsets.symmetric(
-                                        vertical: contentPadding * 0.75,
-                                      ),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(16),
-                                      ),
-                                    ),
-                                    child: _isLoading
-                                        ? Row(
-                                            mainAxisAlignment: MainAxisAlignment.center,
-                                            children: [
-                                              SizedBox(
-                                                width: 20,
-                                                height: 20,
-                                                child: CircularProgressIndicator(
-                                                  strokeWidth: 2,
-                                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                                    Colors.grey[800]!,
-                                                  ),
-                                                ),
-                                              ),
-                                              const SizedBox(width: 12),
-                                              Text(
-                                                'Creating Account...',
-                                                style: GoogleFonts.montserrat(
-                                                  color: Colors.grey[800],
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 16,
-                                                ),
-                                              ),
-                                            ],
-                                          )
-                                        : Text(
-                                            'Sign Up',
-                                            style: GoogleFonts.montserrat(
-                                              color: Colors.black87,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 16,
+                                  child: _isLoading
+                                      ? const SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            valueColor: AlwaysStoppedAnimation<Color>(
+                                              Colors.white,
                                             ),
                                           ),
-                                  ),
+                                        )
+                                      : const Text('Sign Up'),
                                 ),
                               ),
                             ],
                           ),
                         ),
                       ),
-
-                      // Enhanced Sign In Link
-                      SizedBox(height: contentPadding),
-                      TextButton(
-                        onPressed: () => Navigator.pushNamed(context, '/login'),
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 24,
-                            vertical: 12,
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'Already have an account? ',
+                            style: TextStyle(color: Colors.grey[600]),
                           ),
-                        ),
-                        child: Text.rich(
-                          TextSpan(
-                            text: 'Already have an account? ',
-                            style: GoogleFonts.montserrat(
-                              color: Colors.grey[600],
-                              fontSize: subtitleSize * 0.9,
+                          TextButton(
+                            onPressed: () {
+                              Navigator.pushReplacementNamed(context, '/login');
+                            },
+                            child: Text(
+                              'Login',
+                              style: TextStyle(
+                                color: AppTheme.primary,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                            children: [
-                              TextSpan(
-                                text: 'Sign in',
-                                style: TextStyle(
-                                  color: AppTheme.primary,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
                           ),
-                        ),
-                      ),
-
-                      // Enhanced Footer
-                      SizedBox(height: contentPadding),
-                      Text(
-                        '© 2025 MujBites. All rights reserved.',
-                        style: GoogleFonts.montserrat(
-                          color: Colors.grey[500],
-                          fontSize: 12,
-                          letterSpacing: 0.5,
-                        ),
+                        ],
                       ),
                     ],
                   ),
@@ -513,69 +622,38 @@ class _SignupScreenState extends State<SignupScreen> with SingleTickerProviderSt
     required TextEditingController controller,
     required String label,
     required IconData icon,
-    TextInputType? keyboardType,
     bool obscureText = false,
-    bool showPasswordToggle = false,
-    VoidCallback? onTogglePassword,
+    Widget? suffixIcon,
     String? Function(String?)? validator,
+    TextInputType? keyboardType,
+    bool enabled = true,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: GoogleFonts.montserrat(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: Colors.grey[700],
-            letterSpacing: 0.3,
-          ),
+    return TextFormField(
+      controller: controller,
+      obscureText: obscureText,
+      enabled: enabled,
+      keyboardType: keyboardType,
+      style: const TextStyle(fontSize: 16),
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon, color: Colors.grey),
+        suffixIcon: suffixIcon,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Colors.grey),
         ),
-        const SizedBox(height: 8),
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.grey[50],
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: Colors.grey[200]!,
-              width: 1,
-            ),
-          ),
-          child: TextFormField(
-            controller: controller,
-            obscureText: obscureText,
-            keyboardType: keyboardType,
-            style: GoogleFonts.montserrat(
-              fontSize: 15,
-              color: Colors.grey[800],
-            ),
-            decoration: InputDecoration(
-              prefixIcon: Icon(icon, color: Colors.grey[400], size: 20),
-              suffixIcon: showPasswordToggle
-                  ? IconButton(
-                      icon: Icon(
-                        obscureText ? Icons.visibility : Icons.visibility_off,
-                        color: Colors.grey[400],
-                        size: 20,
-                      ),
-                      onPressed: onTogglePassword,
-                    )
-                  : null,
-              hintText: 'Enter your ${label.toLowerCase()}',
-              hintStyle: GoogleFonts.montserrat(
-                color: Colors.grey[400],
-                fontSize: 14,
-              ),
-              border: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 20,
-                vertical: 16,
-              ),
-            ),
-            validator: validator,
-          ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: AppTheme.primary, width: 2),
         ),
-      ],
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.grey.shade300),
+        ),
+        filled: true,
+        fillColor: Colors.grey.shade50,
+      ),
+      validator: validator,
     );
   }
 } 
