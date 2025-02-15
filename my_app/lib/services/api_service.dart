@@ -780,38 +780,25 @@ class ApiService {
     }
   }
 
-  Future<dynamic> post(String endpoint, Map<String, dynamic> data, String token) async {
+  Future<Map<String, dynamic>> post(String endpoint, Map<String, dynamic> data, String token) async {
     try {
-      final response = await _dio.post(
-        '$baseUrl$endpoint',
-        data: data,
-        options: Options(
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
-          validateStatus: (status) => status! < 500,
-        ),
+      final response = await http.post(
+        getUri(endpoint),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode(data),
       );
 
-      if (response.statusCode == 401) {
-        throw Exception('Unauthorized');
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Request failed with status: ${response.statusCode}');
       }
-
-      if (response.statusCode! >= 400) {
-        throw Exception(response.data['message'] ?? 'Error making request');
-      }
-
-      return response.data;
-    } on DioException catch (e) {
-      print('API Error: ${e.message}');
-      if (e.type == DioExceptionType.connectionTimeout) {
-        throw Exception('Connection timed out');
-      }
-      throw Exception(e.message);
     } catch (e) {
-      print('Unexpected error: $e');
-      throw Exception('An unexpected error occurred');
+      print('POST request error: $e');
+      rethrow;
     }
   }
 }

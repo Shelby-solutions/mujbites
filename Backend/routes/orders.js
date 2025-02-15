@@ -10,6 +10,13 @@ const User = require("../models/user");
 // POST /api/orders - Place a new order
 router.post("/", authenticateToken, async (req, res) => {
   try {
+    // Check if user is a restaurant owner
+    if (req.user.role === 'restaurant') {
+      return res.status(403).json({ 
+        message: "Restaurant owners cannot place orders. Please use a customer account."
+      });
+    }
+
     const { restaurant, restaurantName, items, totalAmount, address } = req.body;
     const customer = req.user.userId;
 

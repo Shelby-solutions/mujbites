@@ -28,6 +28,7 @@ import 'dart:math';
 import 'package:collection/collection.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -262,6 +263,7 @@ class NotificationService {
           badge: true,
           sound: true,
           provisional: false,
+          criticalAlert: true,
         );
         
         _logger.info('Notification permission status: ${status.authorizationStatus}, '
@@ -269,6 +271,80 @@ class NotificationService {
 
         // Set up notification channels
         await _setupNotificationChannels();
+      }
+
+      if (Platform.isIOS) {
+        // Wait for APNS token with timeout
+        _logger.info('Waiting for APNS token...');
+        String? apnsToken;
+        int attempts = 0;
+        const maxAttempts = 10; // Increased attempts
+        const delaySeconds = 1; // Reduced delay between attempts
+
+        while (attempts < maxAttempts) {
+          apnsToken = await FirebaseMessaging.instance.getAPNSToken();
+          if (apnsToken != null) {
+            _logger.info('APNS token received: ${apnsToken.substring(0, min(10, apnsToken.length))}...');
+            break;
+          }
+          _logger.info('APNS token not available, attempt ${attempts + 1}/$maxAttempts');
+          await Future.delayed(Duration(seconds: delaySeconds));
+          attempts++;
+        }
+
+        if (apnsToken == null) {
+          _logger.warning('APNS token not available after $maxAttempts attempts. Will retry during token refresh.');
+          // Don't throw an error, continue initialization
+        }
+      }
+
+      // Set up token refresh listener first
+      FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+        _logger.info('FCM Token refreshed');
+        _fcmToken = newToken;
+        await _saveToken(newToken);
+        
+        // Update token on backend if user is logged in
+        final isLoggedIn = await UserPreferences.isLoggedIn();
+        final restaurantId = await UserPreferences.getRestaurantId();
+        if (isLoggedIn && restaurantId != null) {
+          await subscribeToRestaurantOrders(restaurantId);
+        }
+      });
+
+      // Try to get FCM token
+      _logger.info('Requesting FCM token...');
+      int tokenAttempts = 0;
+      const maxTokenAttempts = 5;
+      
+      while (tokenAttempts < maxTokenAttempts) {
+        try {
+          _fcmToken = await FirebaseMessaging.instance.getToken();
+          if (_fcmToken != null) {
+            _logger.info('FCM token received');
+            await _saveToken(_fcmToken!);
+            
+            // Update token on backend if user is logged in
+            final isLoggedIn = await UserPreferences.isLoggedIn();
+            final restaurantId = await UserPreferences.getRestaurantId();
+            if (isLoggedIn && restaurantId != null) {
+              await subscribeToRestaurantOrders(restaurantId);
+            }
+            break;
+          }
+        } catch (e) {
+          _logger.warning('Error getting FCM token (attempt ${tokenAttempts + 1}/$maxTokenAttempts): $e');
+        }
+        
+        tokenAttempts++;
+        if (tokenAttempts < maxTokenAttempts) {
+          await Future.delayed(const Duration(seconds: 2));
+        }
+      }
+
+      if (_fcmToken == null) {
+        _logger.warning('Failed to get FCM token after $maxTokenAttempts attempts');
+        // Don't throw an error, continue initialization
       }
 
       // Set up message handlers
@@ -1078,82 +1154,108 @@ class NotificationService {
         await initialize();
       }
 
+      // Delete any existing token first
+      await FirebaseMessaging.instance.deleteToken();
+      _logger.info('Deleted existing FCM token');
+
+      // Request permissions with retry
       if (Platform.isIOS) {
         _logger.info('Requesting iOS notification permissions...');
-        final settings = await FirebaseMessaging.instance.requestPermission(
-          alert: true,
-          badge: true,
-          sound: true,
-          provisional: false,
-          criticalAlert: true,
-        );
-        _logger.info('iOS permission status: ${settings.authorizationStatus}');
+        int permissionAttempts = 0;
+        const maxPermissionAttempts = 3;
 
-        // Wait for APNS token with timeout
+        while (permissionAttempts < maxPermissionAttempts) {
+          final settings = await FirebaseMessaging.instance.requestPermission(
+            alert: true,
+            badge: true,
+            sound: true,
+            provisional: false,
+            criticalAlert: true,
+          );
+          
+          if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+            _logger.info('iOS notification permissions granted');
+            break;
+          }
+          
+          _logger.warning('iOS permission not granted, attempt ${permissionAttempts + 1}/$maxPermissionAttempts');
+          permissionAttempts++;
+          if (permissionAttempts < maxPermissionAttempts) {
+            await Future.delayed(const Duration(seconds: 1));
+          }
+        }
+
+        // Wait for APNS token with increased timeout
         _logger.info('Waiting for APNS token...');
         String? apnsToken;
         int attempts = 0;
-        const maxAttempts = 5;
-        const delaySeconds = 2;
+        const maxAttempts = 10;
+        const baseDelay = 2;
 
         while (attempts < maxAttempts) {
           apnsToken = await FirebaseMessaging.instance.getAPNSToken();
           if (apnsToken != null) {
-            _logger.info('APNS token received: ${apnsToken.substring(0, 10)}...');
+            _logger.info('APNS token received: ${apnsToken.substring(0, min(10, apnsToken.length))}...');
             break;
           }
           _logger.info('APNS token not available, attempt ${attempts + 1}/$maxAttempts');
-          await Future.delayed(Duration(seconds: delaySeconds));
+          // Exponential backoff
+          await Future.delayed(Duration(seconds: baseDelay * (attempts + 1)));
           attempts++;
         }
 
         if (apnsToken == null) {
           _logger.error('Failed to get APNS token after $maxAttempts attempts');
-          throw Exception('Failed to get APNS token. Please check your notification settings.');
+          // Continue anyway, as FCM token might still work
         }
       }
 
-      // Delete any existing token
-      await FirebaseMessaging.instance.deleteToken();
-      _logger.info('Deleted existing FCM token');
-
-      // Get new FCM token
-      _fcmToken = await FirebaseMessaging.instance.getToken();
-      if (_fcmToken == null) {
-        throw Exception('Failed to get FCM token');
-      }
-      _logger.info('New FCM Token received: ${_fcmToken!.substring(0, 10)}...');
-
-      // Save token locally
-      await _saveToken(_fcmToken!);
-
-      // Set up token refresh listener
-      FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
-        _logger.info('FCM Token refreshed: ${newToken.substring(0, 10)}...');
-        _fcmToken = newToken;
-        await _saveToken(newToken);
-        
-        // Send new token to backend
+      // Get new FCM token with retry
+      _logger.info('Requesting new FCM token...');
+      int tokenAttempts = 0;
+      const maxTokenAttempts = 5;
+      
+      while (tokenAttempts < maxTokenAttempts) {
         try {
-          final prefs = await SharedPreferences.getInstance();
-          final token = prefs.getString('token');
-          if (token != null) {
-            await _apiService.post(
-              '/api/users/update-fcm-token',
-              {
-                'fcmToken': newToken,
-                'deviceType': Platform.isIOS ? 'ios' : 'android',
-                'deviceInfo': await _getDeviceInfo(),
-                'timestamp': DateTime.now().toIso8601String(),
-              },
-              token,
-            );
-            _logger.info('Refreshed FCM token sent to backend successfully');
+          _fcmToken = await FirebaseMessaging.instance.getToken();
+          if (_fcmToken != null) {
+            _logger.info('New FCM token received: ${_fcmToken!.substring(0, 10)}...');
+            
+            // Save token locally
+            await _saveToken(_fcmToken!);
+            
+            // Send token to backend
+            final prefs = await SharedPreferences.getInstance();
+            final authToken = prefs.getString('token');
+            if (authToken != null) {
+              await _apiService.post(
+                '/api/users/update-fcm-token',
+                {
+                  'fcmToken': _fcmToken,
+                  'deviceType': Platform.isIOS ? 'ios' : 'android',
+                  'deviceInfo': await _getDeviceInfo(),
+                  'appVersion': await _getAppVersion(),
+                  'timestamp': DateTime.now().toIso8601String(),
+                },
+                authToken,
+              );
+              _logger.info('FCM token sent to backend successfully');
+            }
+            break;
           }
         } catch (e) {
-          _logger.error('Error sending refreshed FCM token to backend: $e');
+          _logger.error('Error getting FCM token (attempt ${tokenAttempts + 1}/$maxTokenAttempts): $e');
         }
-      });
+        
+        tokenAttempts++;
+        if (tokenAttempts < maxTokenAttempts) {
+          await Future.delayed(Duration(seconds: 2 * (tokenAttempts + 1)));
+        }
+      }
+
+      if (_fcmToken == null) {
+        throw Exception('Failed to get FCM token after $maxTokenAttempts attempts');
+      }
 
       return _fcmToken;
     } catch (e, stackTrace) {
@@ -1171,5 +1273,15 @@ class NotificationService {
       return '${androidInfo.manufacturer} ${androidInfo.model}';
     }
     return 'unknown';
+  }
+
+  Future<String> _getAppVersion() async {
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      return packageInfo.version;
+    } catch (e) {
+      _logger.error('Error getting app version: $e');
+      return '1.0.0';
+    }
   }
 } 

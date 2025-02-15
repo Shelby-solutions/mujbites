@@ -261,31 +261,57 @@ router.post('/logout', authenticateToken, async (req, res) => {
 // Update FCM Token
 router.post('/update-fcm-token', authenticateToken, async (req, res) => {
   try {
-    const userId = req.user.userId; // Get userId from authenticated token
-    const { fcmToken, deviceType, appVersion } = req.body;
+    const userId = req.user.userId;
+    const { fcmToken, deviceType, deviceInfo, appVersion, timestamp } = req.body;
 
     // Validate required fields
     if (!fcmToken) {
       return res.status(400).json({ message: 'FCM token is required.' });
     }
 
+    console.log('Updating FCM token for user:', {
+      userId,
+      role: req.user.role,
+      deviceType,
+      tokenPrefix: fcmToken.substring(0, 10)
+    });
+
     // Update user's FCM token in the database
+    const updateData = {
+      fcmToken,
+      deviceType: deviceType || 'unknown',
+      deviceInfo: deviceInfo || 'unknown',
+      appVersion: appVersion || '1.0.0',
+      lastTokenUpdate: timestamp ? new Date(timestamp) : new Date()
+    };
+
     const user = await User.findByIdAndUpdate(
       userId,
-      {
-        fcmToken,
-        deviceType: deviceType || 'unknown',
-        appVersion: appVersion || '1.0.0',
-        lastTokenUpdate: new Date()
-      },
+      updateData,
       { new: true }
-    );
+    ).select('role restaurant fcmToken deviceType lastTokenUpdate');
 
     if (!user) {
+      console.error('User not found when updating FCM token:', userId);
       return res.status(404).json({ message: 'User not found.' });
     }
 
-    res.status(200).json({ message: 'FCM token updated successfully' });
+    console.log('FCM token updated successfully:', {
+      userId: user._id,
+      role: user.role,
+      restaurantId: user.restaurant,
+      deviceType: user.deviceType,
+      lastUpdate: user.lastTokenUpdate
+    });
+
+    res.status(200).json({ 
+      message: 'FCM token updated successfully',
+      user: {
+        role: user.role,
+        deviceType: user.deviceType,
+        lastUpdate: user.lastTokenUpdate
+      }
+    });
   } catch (error) {
     console.error('Error updating FCM token:', error);
     res.status(500).json({ message: 'Server error.', error: error.message });
