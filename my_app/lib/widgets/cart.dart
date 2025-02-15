@@ -8,6 +8,7 @@ import '../theme/app_theme.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/notification_service.dart';
 import '../utils/logger.dart';
+import '../services/user_preferences.dart';
 
 class CartWidget extends StatefulWidget {
   final VoidCallback onClose;
@@ -116,6 +117,30 @@ class _CartWidgetState extends State<CartWidget> with SingleTickerProviderStateM
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
       final isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
+      final userRole = await UserPreferences.getRole();
+      
+      // Check if user is a restaurant owner
+      if (userRole == 'restaurant') {
+        if (!mounted) return;
+        
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Cannot Place Order'),
+            content: const Text(
+              'Restaurant owners cannot place orders. Please use a customer account to place orders.',
+              style: TextStyle(fontSize: 16),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
       
       if (token == null || !isLoggedIn) {
         // Close cart before navigation
