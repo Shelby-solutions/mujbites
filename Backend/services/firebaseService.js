@@ -2,6 +2,7 @@ const admin = require('firebase-admin');
 const logger = require('../utils/logger');
 const { createHash } = require('crypto');
 const User = require('../models/user');
+const Restaurant = require('../models/restaurant');
 require('dotenv').config();
 
 // Initialize Firebase Admin only if credentials are available
@@ -18,6 +19,8 @@ try {
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
     };
 
+    logger.info('Initializing Firebase with project:', process.env.FIREBASE_PROJECT_ID);
+    
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount)
     });
@@ -25,7 +28,11 @@ try {
     firebaseInitialized = true;
     logger.info('Firebase Admin initialized successfully');
   } else {
-    logger.warn('Firebase credentials not found, notifications will be disabled');
+    logger.warn('Firebase credentials not found:', {
+      hasProjectId: !!process.env.FIREBASE_PROJECT_ID,
+      hasPrivateKey: !!process.env.FIREBASE_PRIVATE_KEY,
+      hasClientEmail: !!process.env.FIREBASE_CLIENT_EMAIL
+    });
   }
 } catch (error) {
   logger.error('Error initializing Firebase:', error);
@@ -252,53 +259,63 @@ const _retryNotifications = async (tokens, attempt = 1, maxAttempts = 3) => {
   }
 };
 
-const sendNotificationToRestaurant = async (restaurantId, title, body, data) => {
+const sendNotificationToRestaurant = async (restaurantId, title, body, data = {}) => {
+  if (!isValidRestaurantId(restaurantId)) {
+    logger.error('Invalid restaurant ID:', restaurantId);
+    return { success: false, error: 'Invalid restaurant ID' };
+  }
+
   try {
-    // Validate restaurant ID
-    if (!isValidRestaurantId(restaurantId)) {
-      throw new Error('Invalid restaurant ID format');
-    }
-
-    logger.info('Sending notification to restaurant:', restaurantId);
-    logger.debug('Notification data:', { title, body, data });
-
-    // Retrieve the FCM token for the restaurant (implementation may vary)
+    // Get FCM token for the restaurant
     const fcmToken = await getFcmTokenForRestaurant(restaurantId);
     if (!fcmToken) {
-      throw new Error('No FCM token found for restaurant ' + restaurantId);
+      logger.error(`No FCM token found for restaurant ${restaurantId}`);
+      return { success: false, error: 'FCM token not found' };
     }
+
+    logger.info('Sending notification to restaurant:', { 
+      restaurantId,
+      tokenPrefix: fcmToken.substring(0, 10),
+      title,
+      body 
+    });
 
     const message = {
       token: fcmToken,
       notification: {
-        title: title,
-        body: body
+        title,
+        body,
+      },
+      data: {
+        ...data,
+        click_action: 'FLUTTER_NOTIFICATION_CLICK',
       },
       android: {
         priority: 'high',
         notification: {
-          clickAction: 'FLUTTER_NOTIFICATION_CLICK',
-          sound: 'default'
+          channelId: 'new_orders',
+          sound: 'notification_sound',
+          priority: 'max',
+          visibility: 'public',
+        },
+      },
+      apns: {
+        payload: {
+          aps: {
+            sound: 'notification_sound.aiff',
+            badge: 1,
+            'content-available': 1,
+          },
+        },
+        headers: {
+          'apns-priority': '10',
+          'apns-push-type': 'alert'
         }
       },
-      data: {
-        ...data,
-        title: title,
-        body: body
-      }
     };
 
-    const result = await sendNotificationWithRetry(message);
-    
-    if (!result.success) {
-      if (result.permanent) {
-        logger.error('Permanent notification failure:', result.error);
-      } else {
-        throw new Error(`Failed to send notification after ${MAX_RETRIES} attempts`);
-      }
-    }
-
-    return result.response;
+    logger.info('Notification payload:', message);
+    return sendNotificationWithRetry(message);
   } catch (error) {
     logger.error('Error in sendNotificationToRestaurant:', error);
     throw error;
@@ -358,38 +375,25 @@ const sendNotificationToUser = async (userId, title, body, data = {}) => {
 // Function to get FCM token for a restaurant
 const getFcmTokenForRestaurant = async (restaurantId) => {
   try {
-    logger.debug('Looking for restaurant user with:', { restaurantId });
+    const restaurant = await Restaurant.findById(restaurantId)
+      .populate('owner')
+      .select('owner');
 
-    // Find the user with the given restaurant ID and role 'restaurant'
-    const restaurantUser = await User.findOne({ 
-      restaurant: restaurantId,
-      role: 'restaurant'
-    }).select('+fcmToken');  // Explicitly select fcmToken field
-
-    if (!restaurantUser) {
-      logger.warn(`No restaurant user found for restaurant ${restaurantId}`);
+    if (!restaurant || !restaurant.owner) {
+      logger.error(`Restaurant ${restaurantId} or owner not found`);
       return null;
     }
 
-    logger.debug('Found restaurant user:', { 
-      restaurantId, 
-      userId: restaurantUser._id,
-      role: restaurantUser.role,
-      hasToken: !!restaurantUser.fcmToken,
-      token: restaurantUser.fcmToken?.substring(0, 10) + '...',  // Log first 10 chars of token for debugging
-      deviceType: restaurantUser.deviceType,
-      lastTokenUpdate: restaurantUser.lastTokenUpdate
-    });
-
-    if (!restaurantUser.fcmToken) {
-      logger.warn(`Restaurant user found but no FCM token available for ${restaurantId}`);
+    const user = restaurant.owner;
+    if (!user.fcmToken) {
+      logger.error(`No FCM token found for restaurant owner (userId: ${user._id})`);
       return null;
     }
 
-    return restaurantUser.fcmToken;
+    return user.fcmToken;
   } catch (error) {
     logger.error('Error getting FCM token for restaurant:', error);
-    throw error;
+    return null;
   }
 };
 

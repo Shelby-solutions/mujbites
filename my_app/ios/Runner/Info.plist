@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>My App</string>
+	<string>mujbites</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -28,24 +28,30 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSExceptionDomains</key>
+		<dict/>
+	</dict>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Not used</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Not used</string>
+	<string>Need camera access for uploading images</string>
 	<key>NSLocationAlwaysUsageDescription</key>
-	<string>Not used</string>
+	<string>Need location access for address</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Not used</string>
+	<string>Need location access for address</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Not used</string>
+	<string>Need microphone access for uploading audio</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Not used</string>
+	<string>Need photo library access for uploading images</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
 		<string>remote-notification</string>
+		<string>processing</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>

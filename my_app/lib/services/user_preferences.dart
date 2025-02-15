@@ -9,6 +9,12 @@ class UserPreferences {
   static const String _restaurantNameKey = 'restaurantName';
   static const String _restaurantActiveKey = 'restaurantIsActive';
 
+  static SharedPreferences? _prefs;
+
+  static Future<void> init() async {
+    _prefs = await SharedPreferences.getInstance();
+  }
+
   static Future<void> clear() async {
     print('\n=== UserPreferences.clear ===');
     final prefs = await SharedPreferences.getInstance();
@@ -101,29 +107,6 @@ class UserPreferences {
     print('RestaurantName: ${prefs.getString(_restaurantNameKey)}\n');
   }
 
-  static Future<void> init() async {
-    print('\n=== Initializing UserPreferences ===');
-    final prefs = await SharedPreferences.getInstance();
-    
-    // Debug current state
-    final currentKeys = prefs.getKeys();
-    print('Current stored keys:');
-    for (var key in currentKeys) {
-      print('$key: ${prefs.get(key)}');
-    }
-    
-    // Only clear if there's invalid data
-    if (await _hasInvalidData(prefs)) {
-      print('Found invalid data, clearing preferences');
-      await prefs.clear();
-      await prefs.commit();
-    } else {
-      print('Valid data found, keeping preferences');
-    }
-    
-    print('=== UserPreferences Initialized ===\n');
-  }
-
   static Future<bool> _hasInvalidData(SharedPreferences prefs) async {
     final userId = prefs.getString(_userIdKey);
     final token = prefs.getString(_tokenKey);
@@ -182,5 +165,13 @@ class UserPreferences {
     final value = prefs.getString(key);
     await _logAccess('getString', key, value);
     return value;
+  }
+
+  static Future<void> setRestaurantId(String restaurantId) async {
+    await _prefs?.setString('restaurant_id', restaurantId);
+  }
+
+  static Future<String?> getRestaurantId() async {
+    return _prefs?.getString('restaurant_id');
   }
 } 

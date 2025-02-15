@@ -1,13 +1,97 @@
 # Scratchpad
 
-Current Task: Build iOS .app file for Flutter application
+## Current Task: Codebase Exploration
+Exploring the structure and contents of the MujBites app codebase
 
-Steps:
-[ ] Check if iOS directory exists and is properly configured
-[ ] Verify iOS build requirements
-[ ] Run Flutter build commands for iOS
-[ ] Handle any build errors if they occur
-[ ] Verify the built .app file
+Plan:
+[X] Explore Flutter app structure (lib directory)
+  [X] Main app configuration and setup
+    - Flutter app using Material Design 3
+    - Firebase integration for messaging and notifications
+    - Provider for state management
+    - Multiple screens: login, signup, home, profile, orders, restaurant panel
+    - Custom theme implementation
+    - Local storage with shared_preferences and sqflite
+    - Background message handling for notifications
+  [X] Models
+    - order.dart: Order and OrderItem models with JSON serialization
+    - cart.dart: Shopping cart implementation
+    - notification_model.dart: Push notification handling
+    - cart_item.dart: Individual cart item structure
+  [X] Services
+    - api_service.dart: HTTP client with error handling and timeouts
+    - notification_service.dart: Push notification handling
+    - user_preferences.dart: Local storage management
+    - auth_service.dart: User authentication
+    - gemini_service.dart: AI integration
+    - order_service.dart: Order management
+  [X] Utils
+    - notification_rate_limiter.dart: Rate limiting for notifications
+    - encryption_util.dart: Data encryption utilities
+    - logger.dart: Logging functionality
 
-Progress:
-- Starting iOS build process... 
+[X] Explore Backend structure
+  [X] Server setup and configuration
+    - Express.js server with MongoDB
+    - WebSocket support
+    - Security middleware (helmet, cors)
+    - Session management with MongoStore
+    - Routes: restaurants, users, orders, cart, recommendations
+    - Health monitoring endpoints
+    - Graceful shutdown handling
+  [X] Models
+    - orders.js: Mongoose schema with auto-cancellation after 8 minutes
+    - user.js: User authentication and profile
+    - recommendations.js: User preferences and suggestions
+    - MenuItems.js: Restaurant menu items
+    - restaurantModel.js & Restaurant.js: Restaurant information
+    - Cart.js: Shopping cart data structure
+  [X] Services
+    - firebaseService.js: Push notification handling with retry logic
+    - websocketService.js: Real-time communication
+  [X] Controllers
+    - orderController.js: Order creation and management
+    - recommendationsController.js: User recommendations
+    - restaurantController.js: Restaurant management
+    - userController.js: User authentication and profile management
+  [X] Utils
+    - logger.js: Logging functionality
+    - error.js: Error handling utilities
+  [X] Middleware
+    - authMiddleware.js: JWT token authentication
+    - isRestaurantOwner.js: Restaurant owner authorization
+    - routeGuard.js: Route access control
+    - validation.js: Request data validation
+    - authenticateToken.js: Token verification
+
+Key Features Identified:
+1. Real-time notifications using Firebase Cloud Messaging
+2. Restaurant management panel
+3. Cart and order management with auto-cancellation
+4. User authentication and sessions
+5. Recommendations system
+6. WebSocket integration for real-time updates
+7. AI integration through Gemini service
+8. Robust error handling and retry mechanisms
+9. Rate limiting for notifications
+10. Data encryption for sensitive information
+11. Role-based access control
+12. Request validation middleware
+
+Notable Findings:
+1. The app uses a dual-model approach where both client and server maintain their own data structures
+2. Strong type safety in Flutter with dedicated model classes
+3. Mongoose schemas with validation and middleware in the backend
+4. Auto-cancellation feature for unaccepted orders after 8 minutes
+5. Comprehensive error handling and data validation on both ends
+6. Sophisticated notification system with token validation and retry logic
+7. Environment-aware API endpoints (dev/prod) with timeout handling
+8. Caching mechanisms for device tokens and user preferences
+9. Parallel notification dispatch with Promise.allSettled
+10. Rate limiting to prevent notification spam
+11. Encryption utilities for sensitive data
+12. Structured logging across both client and server
+13. JWT-based authentication with role verification
+14. Layered middleware for security and validation
+
+Exploration Complete! The codebase shows a well-structured, secure, and feature-rich food delivery application with strong emphasis on real-time communication, security, and user experience.

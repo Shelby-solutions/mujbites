@@ -27,13 +27,41 @@ import '../services/api_service.dart';
 import 'dart:math';
 import 'package:collection/collection.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
+    // Keep device awake while processing notification
     await WakelockPlus.enable();
     
+    // Initialize Firebase
     await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+    
+    // Initialize notifications plugin
+    final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+    
+    // Initialize notification channels for Android
+    if (Platform.isAndroid) {
+      const androidInitialize = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const initializationSettings = InitializationSettings(android: androidInitialize);
+      await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+      
+      await flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          'new_orders',
+          'New Orders',
+          description: 'High priority notifications for new incoming orders.',
+          importance: Importance.max,
+          playSound: true,
+          enableVibration: true,
+          enableLights: true,
+          ledColor: Color.fromARGB(255, 255, 87, 34),
+        ),
+      );
+    }
     
     print('Background message received:');
     print('- Message ID: ${message.messageId}');
@@ -75,9 +103,16 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         ],
       );
 
-      final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+      final iOSDetails = const DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+        sound: 'notification_sound.aiff',
+        interruptionLevel: InterruptionLevel.timeSensitive,
+        threadIdentifier: 'new_orders',
+      );
       
-      String title = message.notification?.title ?? 'New Notification';
+      String title = message.notification?.title ?? 'New Order';
       String body = message.notification?.body ?? message.data['body'] ?? '';
       
       // Add order amount if available
@@ -91,13 +126,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         body,
         NotificationDetails(
           android: androidDetails,
-          iOS: const DarwinNotificationDetails(
-            presentAlert: true,
-            presentBadge: true,
-            presentSound: true,
-            sound: 'notification_sound.aiff',
-            interruptionLevel: InterruptionLevel.timeSensitive,
-          ),
+          iOS: iOSDetails,
         ),
         payload: json.encode(message.data),
       );
@@ -105,14 +134,23 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       // Play sound for new orders
       if (notificationType == 'ORDER_PLACED') {
         final player = AudioPlayer();
-        await player.play(AssetSource('sounds/new_order.mp3'));
-        await Future.delayed(const Duration(seconds: 2));
-        player.dispose();
+        try {
+          await player.play(AssetSource('sounds/new_order.mp3'));
+          await Future.delayed(const Duration(seconds: 2));
+        } catch (e) {
+          print('Error playing notification sound: $e');
+        } finally {
+          player.dispose();
+        }
       }
 
       // Vibrate for high-priority notifications
       if (Platform.isAndroid) {
-        HapticFeedback.vibrate();
+        try {
+          await HapticFeedback.vibrate();
+        } catch (e) {
+          print('Error during vibration: $e');
+        }
       }
     }
   } catch (e, stackTrace) {
@@ -178,14 +216,14 @@ class NotificationService {
   static bool _initializationInProgress = false;
   static final Int64List _vibrationPatternConst = Int64List.fromList([0, 500, 200, 500]);
   final _apiService = ApiService();
+  final Set<String> _subscribedTopics = {};
+  String? _fcmToken;
 
   // Callback functions
   Function(Map<String, dynamic>)? onNewOrder;
   Function(Map<String, dynamic>)? onNewMessage;
 
-  factory NotificationService() {
-    return _instance;
-  }
+  factory NotificationService() => _instance;
 
   NotificationService._internal() {
     _reconnectionManager = ReconnectionManager(_logger, () async {
@@ -218,13 +256,20 @@ class NotificationService {
       _logger.info('Firebase initialized');
 
       // Request notification permissions
-      await _requestPermissions();
-      
-      // Get and update FCM token
-      await _initializeFcmToken();
+      if (!kIsWeb) {
+        final status = await FirebaseMessaging.instance.requestPermission(
+          alert: true,
+          badge: true,
+          sound: true,
+          provisional: false,
+        );
+        
+        _logger.info('Notification permission status: ${status.authorizationStatus}, '
+            'alert: ${status.alert}, sound: ${status.sound}, badge: ${status.badge}');
 
-      // Set up notification channels
-      await _setupNotificationChannels();
+        // Set up notification channels
+        await _setupNotificationChannels();
+      }
 
       // Set up message handlers
       FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
@@ -248,70 +293,19 @@ class NotificationService {
       _initialized = true;
       _logger.info('NotificationService initialization completed successfully');
     } catch (e, stackTrace) {
-      _logger.error('Error during NotificationService initialization: $e\n$stackTrace');
+      _logger.error('Error initializing NotificationService: $e\n$stackTrace');
       rethrow;
     } finally {
       _initializationInProgress = false;
     }
   }
 
-  Future<void> _initializeFcmToken() async {
-    try {
-      // Get the FCM token
-      final fcmToken = await FirebaseMessaging.instance.getToken();
-      if (fcmToken == null) {
-        _logger.error('Failed to obtain FCM token');
-        return;
-      }
-
-      _logger.info('FCM Token obtained: ${fcmToken.substring(0, min(10, fcmToken.length))}...');
-      
-      // Update the token on the server
-      await _updateFcmToken(fcmToken);
-      
-      // Listen for token refreshes
-      FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
-        _logger.info('FCM Token refreshed: ${newToken.substring(0, min(10, newToken.length))}...');
-        _updateFcmToken(newToken);
-      });
-    } catch (e) {
-      _logger.error('Error initializing FCM token: $e');
-      // Don't rethrow as this is not critical for app functionality
+  Future<bool> _isEmulator() async {
+    if (Platform.isAndroid) {
+      final androidInfo = await DeviceInfoPlugin().androidInfo;
+      return androidInfo.isPhysicalDevice == false;
     }
-  }
-
-  Future<void> _updateFcmToken(String token) async {
-    const maxRetries = 3;
-    var retryCount = 0;
-    var delay = const Duration(seconds: 2);
-
-    while (retryCount < maxRetries) {
-      try {
-        if (token.isEmpty) {
-          _logger.error('Cannot update FCM token: Token is empty');
-          return;
-        }
-
-        await _apiService.updateFcmToken(token);
-        _logger.info('FCM token updated successfully');
-        
-        // Save token locally
-        await _prefs.setString('fcm_token', token);
-        await _prefs.setInt('fcm_token_timestamp', DateTime.now().millisecondsSinceEpoch);
-        
-        return;
-      } catch (e) {
-        retryCount++;
-        if (retryCount == maxRetries) {
-          _logger.error('Failed to update FCM token after $maxRetries attempts: $e');
-          return;
-        }
-        
-        _logger.warning('Error updating FCM token (attempt $retryCount): $e');
-        await Future.delayed(delay);
-        delay *= 2; // Exponential backoff
-      }
-    }
+    return false;
   }
 
   Future<void> _handleConnectivityChange(ConnectivityResult result) async {
@@ -423,59 +417,62 @@ class NotificationService {
 
   Future<void> subscribeToRestaurantOrders(String restaurantId) async {
     try {
-      if (restaurantId.isEmpty) {
-        _logger.error('Restaurant ID is empty');
-        return;
-      }
-
-      // Format the topic name consistently
-      final topic = 'restaurant_$restaurantId';
-      _logger.info('Attempting to subscribe to topic: $topic');
-
-      // Get current FCM token for debugging
-      String? token = await FirebaseMessaging.instance.getToken();
-      _logger.info('Current FCM Token: $token');
-
-      // Unsubscribe first to ensure clean subscription
-      await FirebaseMessaging.instance.unsubscribeFromTopic(topic);
-      await Future.delayed(const Duration(seconds: 1)); // Wait for unsubscribe to complete
+      // Unsubscribe from previous topics first
+      await _cleanupOldSubscriptions();
       
-      // Subscribe to the topic
-      await FirebaseMessaging.instance.subscribeToTopic(topic);
-      _logger.info('Successfully subscribed to topic: $topic');
+      // Get device info and platform
+      String platform = kIsWeb ? 'web' : Platform.operatingSystem;
+      String deviceInfo = 'unknown';
       
-      // Store subscribed topic
-      final topics = await _getSubscribedTopics();
-      if (!topics.contains(topic)) {
-        topics.add(topic);
-        await _prefs.setStringList('subscribed_topics', topics.toList());
+      if (Platform.isAndroid) {
+        final androidInfo = await DeviceInfoPlugin().androidInfo;
+        deviceInfo = '${androidInfo.manufacturer} ${androidInfo.model}';
+      } else if (Platform.isIOS) {
+        final iosInfo = await DeviceInfoPlugin().iosInfo;
+        deviceInfo = '${iosInfo.name} ${iosInfo.systemVersion}';
       }
       
-      // Verify subscription
-      final storedTopics = await _getSubscribedTopics();
-      _logger.info('Currently subscribed topics: $storedTopics');
+      // Generate and get FCM token
+      _fcmToken = await generateTokenAfterLogin();
+      if (_fcmToken == null) {
+        throw Exception('Failed to generate FCM token');
+      }
       
-      if (!storedTopics.contains(topic)) {
-        _logger.error('Topic subscription verification failed');
-        // Retry subscription
-        await FirebaseMessaging.instance.subscribeToTopic(topic);
+      _logger.info('Cross-platform notification setup - '
+          'platform: $platform, '
+          'deviceInfo: $deviceInfo, '
+          'restaurantId: $restaurantId, '
+          'fcmToken: ${_fcmToken!.substring(0, 10)}..., '
+          'projectId: ${DefaultFirebaseOptions.currentPlatform.projectId}');
+      
+      // Send token to backend
+      final prefs = await SharedPreferences.getInstance();
+      final authToken = prefs.getString('token');
+      if (authToken == null) {
+        throw Exception('Authentication token not found');
       }
 
-      // Print debug information
-      _logger.info('Subscription details:');
-      _logger.info('- Restaurant ID: $restaurantId');
-      _logger.info('- Topic: $topic');
-      _logger.info('- FCM Token: $token');
-      _logger.info('- All Topics: $storedTopics');
+      await _apiService.post(
+        '/api/users/update-fcm-token',
+        {
+          'fcmToken': _fcmToken,
+          'deviceType': platform,
+          'deviceInfo': deviceInfo,
+          'restaurantId': restaurantId,
+          'timestamp': DateTime.now().toIso8601String(),
+        },
+        authToken,
+      );
+      
+      _logger.info('Successfully registered device for notifications - '
+          'restaurantId: $restaurantId');
+
+      // Store the restaurant ID
+      await UserPreferences.setRestaurantId(restaurantId);
     } catch (e, stackTrace) {
-      _logger.error('Error subscribing to restaurant notifications', e, stackTrace);
+      _logger.error('Error subscribing to restaurant orders: $e\n$stackTrace');
       rethrow;
     }
-  }
-
-  Future<Set<String>> _getSubscribedTopics() async {
-    final topics = _prefs.getStringList('subscribed_topics') ?? [];
-    return topics.toSet();
   }
 
   Future<String?> getDeviceToken() async {
@@ -697,38 +694,48 @@ class NotificationService {
   }
 
   Future<void> _setupNotificationChannels() async {
-    if (!Platform.isAndroid) return;
-    
-    final androidPlugin = flutterLocalNotificationsPlugin
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-        
-    if (androidPlugin == null) return;
+    try {
+      final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+      
+      _logger.info('Setting up notification channels');
 
-    // Channel for new orders (high priority)
-    const newOrdersChannel = AndroidNotificationChannel(
-      'new_orders',
-      'New Orders',
-      description: 'High priority notifications for new incoming orders.',
-      importance: Importance.max,
-      playSound: true,
-      enableVibration: true,
-      enableLights: true,
-      ledColor: Color.fromARGB(255, 255, 87, 34),
-    );
-    
-    // Channel for order updates (default priority)
-    const orderUpdatesChannel = AndroidNotificationChannel(
-      'order_updates',
-      'Order Updates',
-      description: 'Notifications for order status updates.',
-      importance: Importance.high,
-      playSound: true,
-      enableVibration: true,
-    );
-    
-    // Create channels one by one
-    await androidPlugin.createNotificationChannel(newOrdersChannel);
-    await androidPlugin.createNotificationChannel(orderUpdatesChannel);
+      const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const iOSSettings = DarwinInitializationSettings(
+        requestAlertPermission: true,
+        requestBadgePermission: true,
+        requestSoundPermission: true,
+      );
+
+      await flutterLocalNotificationsPlugin.initialize(
+        const InitializationSettings(
+          android: androidSettings,
+          iOS: iOSSettings,
+        ),
+        onDidReceiveNotificationResponse: (details) {
+          _logger.info('Notification response received: ${details.payload}');
+        },
+      );
+
+      if (Platform.isAndroid) {
+        await flutterLocalNotificationsPlugin
+            .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+            ?.createNotificationChannel(
+          const AndroidNotificationChannel(
+            'new_orders',
+            'New Orders',
+            description: 'High priority notifications for new incoming orders.',
+            importance: Importance.max,
+            playSound: true,
+            enableVibration: true,
+            enableLights: true,
+            ledColor: Color.fromARGB(255, 255, 87, 34),
+          ),
+        );
+        _logger.info('Android notification channel created');
+      }
+    } catch (e, stackTrace) {
+      _logger.error('Error setting up notification channels: $e\n$stackTrace');
+    }
   }
 
   // Cache notification settings
@@ -1038,5 +1045,149 @@ class NotificationService {
     } catch (e) {
       _logger.error('Error handling general notification', e);
     }
+  }
+
+  Future<void> _cleanupOldSubscriptions() async {
+    try {
+      // Get the restaurant ID from preferences or wherever it's stored
+      final restaurantId = await UserPreferences.getRestaurantId();
+      if (restaurantId != null) {
+        final topic = 'restaurant_$restaurantId';
+        _logger.info('Unsubscribing from topic: $topic');
+        await FirebaseMessaging.instance.unsubscribeFromTopic(topic);
+        _logger.info('Successfully unsubscribed from topic: $topic');
+      }
+      
+      // Clear the subscribed topics set
+      _subscribedTopics.clear();
+      
+      // Clear stored topics in preferences
+      await _prefs.remove('subscribed_topics');
+      
+      _logger.info('Cleaned up all old subscriptions');
+    } catch (e) {
+      _logger.error('Error cleaning up old subscriptions:', e);
+    }
+  }
+
+  // New method to handle post-login token generation
+  Future<String?> generateTokenAfterLogin() async {
+    try {
+      if (!_initialized) {
+        _logger.warning('NotificationService not initialized. Initializing now...');
+        await initialize();
+      }
+
+      if (Platform.isIOS) {
+        _logger.info('Requesting iOS notification permissions...');
+        final settings = await FirebaseMessaging.instance.requestPermission(
+          alert: true,
+          badge: true,
+          sound: true,
+          provisional: false,
+          criticalAlert: true,
+        );
+        _logger.info('iOS permission status: ${settings.authorizationStatus}');
+
+        // Wait for APNS token with timeout
+        _logger.info('Waiting for APNS token...');
+        String? apnsToken;
+        int attempts = 0;
+        const maxAttempts = 5;
+        const delaySeconds = 2;
+
+        while (attempts < maxAttempts) {
+          apnsToken = await FirebaseMessaging.instance.getAPNSToken();
+          if (apnsToken != null) {
+            _logger.info('APNS token received: ${apnsToken.substring(0, 10)}...');
+            break;
+          }
+          _logger.info('APNS token not available, attempt ${attempts + 1}/$maxAttempts');
+          await Future.delayed(Duration(seconds: delaySeconds));
+          attempts++;
+        }
+
+        if (apnsToken == null) {
+          _logger.error('Failed to get APNS token after $maxAttempts attempts');
+          throw Exception('Failed to get APNS token. Please check your notification settings.');
+        }
+      }
+
+      // Get FCM token
+      _fcmToken = await FirebaseMessaging.instance.getToken();
+      if (_fcmToken == null) {
+        throw Exception('Failed to get FCM token');
+      }
+      _logger.info('FCM Token received: ${_fcmToken!.substring(0, 10)}...');
+
+      // Save token locally
+      await _saveToken(_fcmToken!);
+
+      // Send token to backend
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final token = prefs.getString('token');
+        if (token != null) {
+          await _apiService.post(
+            '/api/users/update-fcm-token',
+            {
+              'fcmToken': _fcmToken,
+              'deviceType': Platform.isIOS ? 'ios' : 'android',
+              'deviceInfo': await _getDeviceInfo(),
+            },
+            token,
+          );
+          _logger.info('FCM token sent to backend successfully');
+        } else {
+          _logger.error('No auth token available to send FCM token to backend');
+        }
+      } catch (e) {
+        _logger.error('Error sending FCM token to backend: $e');
+        // Don't rethrow as we still want to continue with the token we have
+      }
+
+      // Monitor token refresh
+      FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+        _logger.info('FCM Token refreshed: ${newToken.substring(0, 10)}...');
+        _fcmToken = newToken;
+        await _saveToken(newToken);
+        
+        // Send new token to backend
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          final token = prefs.getString('token');
+          if (token != null) {
+            await _apiService.post(
+              '/api/users/update-fcm-token',
+              {
+                'fcmToken': newToken,
+                'deviceType': Platform.isIOS ? 'ios' : 'android',
+                'deviceInfo': await _getDeviceInfo(),
+              },
+              token,
+            );
+            _logger.info('Refreshed FCM token sent to backend successfully');
+          }
+        } catch (e) {
+          _logger.error('Error sending refreshed FCM token to backend: $e');
+        }
+      });
+
+      return _fcmToken;
+    } catch (e, stackTrace) {
+      _logger.error('Error generating token after login: $e\n$stackTrace');
+      rethrow;
+    }
+  }
+
+  Future<String> _getDeviceInfo() async {
+    if (Platform.isIOS) {
+      final iosInfo = await DeviceInfoPlugin().iosInfo;
+      return '${iosInfo.name} ${iosInfo.systemVersion}';
+    } else if (Platform.isAndroid) {
+      final androidInfo = await DeviceInfoPlugin().androidInfo;
+      return '${androidInfo.manufacturer} ${androidInfo.model}';
+    }
+    return 'unknown';
   }
 } 

@@ -779,4 +779,39 @@ class ApiService {
       return '1.0.0'; // Fallback version
     }
   }
+
+  Future<dynamic> post(String endpoint, Map<String, dynamic> data, String token) async {
+    try {
+      final response = await _dio.post(
+        '$baseUrl$endpoint',
+        data: data,
+        options: Options(
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          validateStatus: (status) => status! < 500,
+        ),
+      );
+
+      if (response.statusCode == 401) {
+        throw Exception('Unauthorized');
+      }
+
+      if (response.statusCode! >= 400) {
+        throw Exception(response.data['message'] ?? 'Error making request');
+      }
+
+      return response.data;
+    } on DioException catch (e) {
+      print('API Error: ${e.message}');
+      if (e.type == DioExceptionType.connectionTimeout) {
+        throw Exception('Connection timed out');
+      }
+      throw Exception(e.message);
+    } catch (e) {
+      print('Unexpected error: $e');
+      throw Exception('An unexpected error occurred');
+    }
+  }
 }

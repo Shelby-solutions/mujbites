@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../services/notification_service.dart';
+import '../utils/logger.dart';
 
 class CartWidget extends StatefulWidget {
   final VoidCallback onClose;
@@ -24,6 +25,7 @@ class _CartWidgetState extends State<CartWidget> with SingleTickerProviderStateM
   late final Animation<Offset> _slideAnimation;
   bool _showAddressPopup = false;
   bool _isOrdering = false;
+  final _logger = Logger();
 
   // Cache styles and decorations
   static final _headerGradient = LinearGradient(
@@ -154,6 +156,11 @@ class _CartWidgetState extends State<CartWidget> with SingleTickerProviderStateM
   }
 
   Future<void> _confirmOrder(BuildContext context, CartProvider cartProvider) async {
+    if (_isOrdering) {
+      _logger.info('Order placement already in progress, preventing duplicate submission');
+      return;
+    }
+
     // Add minimum order check
     if (cartProvider.totalAmount < 100) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -214,23 +221,27 @@ class _CartWidgetState extends State<CartWidget> with SingleTickerProviderStateM
       cartProvider.clearCart();
       
       // Close the address dialog first
-      Navigator.pop(context);
-      // Then close the cart widget
-      widget.onClose();
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Order placed successfully!'),
-          backgroundColor: Colors.green,
-        ),
-      );
+      if (mounted) {
+        Navigator.pop(context);
+        // Then close the cart widget
+        widget.onClose();
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Order placed successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.toString()),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString()),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() => _isOrdering = false);
@@ -523,23 +534,62 @@ class _CartWidgetState extends State<CartWidget> with SingleTickerProviderStateM
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: cart.items.isEmpty ? null : () => _showAddressDialog(context),
-                style: _orderButtonStyle,
+                onPressed: cart.items.isEmpty || _isOrdering ? null : () => _showAddressDialog(context),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _isOrdering ? Colors.grey[300] : AppTheme.primary,
+                  foregroundColor: Colors.black87,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+                  disabledBackgroundColor: Colors.grey[300],
+                  disabledForegroundColor: Colors.black54,
+                ).copyWith(
+                  overlayColor: _isOrdering 
+                    ? MaterialStateProperty.all(Colors.transparent)
+                    : MaterialStateProperty.resolveWith((states) {
+                        if (states.contains(MaterialState.pressed)) {
+                          return Colors.black12;
+                        }
+                        return null;
+                      }),
+                ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(
-                      Icons.local_shipping_outlined,
-                      size: metrics.iconSize,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Place Order',
-                      style: GoogleFonts.montserrat(
-                        fontSize: metrics.subtitleSize,
-                        fontWeight: FontWeight.bold,
+                    if (_isOrdering) ...[
+                      SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.black54),
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 16),
+                      Text(
+                        'Processing Order...',
+                        style: GoogleFonts.montserrat(
+                          fontSize: metrics.subtitleSize,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black54,
+                        ),
+                      ),
+                    ] else ...[
+                      Icon(
+                        Icons.local_shipping_outlined,
+                        size: metrics.iconSize,
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        'Place Order',
+                        style: GoogleFonts.montserrat(
+                          fontSize: metrics.subtitleSize,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -554,53 +604,82 @@ class _CartWidgetState extends State<CartWidget> with SingleTickerProviderStateM
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(
-          'Delivery Address',
-          style: GoogleFonts.playfairDisplay(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        content: TextField(
-          controller: _addressController,
-          maxLines: 3,
-          decoration: InputDecoration(
-            hintText: 'Enter your delivery address...',
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: AppTheme.primary, width: 2),
+      barrierDismissible: !_isOrdering, // Prevent dismissing during order placement
+      builder: (context) => WillPopScope(
+        onWillPop: () async => !_isOrdering, // Prevent back button during order placement
+        child: AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            'Delivery Address',
+            style: GoogleFonts.playfairDisplay(
+              fontWeight: FontWeight.bold,
             ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Cancel',
-              style: GoogleFonts.montserrat(color: Colors.grey),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: _isOrdering ? null : () => _confirmOrder(context, cartProvider),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primary,
-              shape: RoundedRectangleBorder(
+          content: TextField(
+            controller: _addressController,
+            maxLines: 3,
+            enabled: !_isOrdering, // Disable text field during order placement
+            decoration: InputDecoration(
+              hintText: 'Enter your delivery address...',
+              border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
-            ),
-            child: Text(
-              _isOrdering ? 'Placing Order...' : 'Confirm Order',
-              style: GoogleFonts.montserrat(
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: AppTheme.primary, width: 2),
               ),
             ),
           ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: _isOrdering ? null : () => Navigator.pop(context),
+              child: Text(
+                'Cancel',
+                style: GoogleFonts.montserrat(
+                  color: _isOrdering ? Colors.grey.withOpacity(0.5) : Colors.grey
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: _isOrdering ? null : () => _confirmOrder(context, cartProvider),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primary,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: _isOrdering 
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.black87),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Placing Order...',
+                        style: GoogleFonts.montserrat(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ],
+                  )
+                : Text(
+                    'Confirm Order',
+                    style: GoogleFonts.montserrat(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+            ),
+          ],
+        ),
       ),
     );
   }

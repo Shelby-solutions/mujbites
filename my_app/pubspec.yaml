@@ -44,11 +44,8 @@ dependencies:
   audioplayers: ^5.2.1
   package_info_plus: ^8.0.0
   web_socket_channel: ^2.4.3
-
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.2
-  flutter_local_notifications: ^18.0.1
+  device_info_plus: ^9.1.2
+  flutter_local_notifications: ^16.3.2
   google_fonts: ^6.1.0
   animated_text_kit: ^4.2.2
   shimmer: ^3.0.0
@@ -63,6 +60,10 @@ dependencies:
   connectivity_plus: ^5.0.2
   wakelock_plus: ^1.1.4
   logger: ^2.0.2+1
+
+  # The following adds the Cupertino Icons font to your application.
+  # Use with the CupertinoIcons class for iOS style icons.
+  cupertino_icons: ^1.0.2
 
 dev_dependencies:
   flutter_test:
@@ -90,6 +91,7 @@ flutter:
     - .env
     - assets/images/
     - assets/sounds/
+    - assets/icons/
     - assets/sounds/notification_sound.mp3
     - assets/sounds/notification_sound.wav
     - assets/sounds/notification_sound.aiff
