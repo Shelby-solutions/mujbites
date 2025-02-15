@@ -103,41 +103,45 @@ const isValidRestaurantId = (restaurantId) => {
          restaurantId.match(/^[0-9a-fA-F]{24}$/);
 };
 
-const sendNotificationWithRetry = async (message, retryCount = 0) => {
-  if (!firebaseInitialized) {
-    logger.warn('Firebase not initialized, skipping notification');
-    return { success: false, error: 'Firebase not initialized' };
-  }
-
+const sendNotificationWithRetry = async (message, attempt = 1) => {
   try {
-    const response = await admin.messaging().send(message);
-    logger.info('Notification sent successfully:', response);
-    return { success: true, response };
+    if (!firebaseInitialized) {
+      logger.error('Firebase not initialized');
+      return { success: false, error: 'Firebase not initialized' };
+    }
+
+    const result = await admin.messaging().send(message);
+    logger.info('Notification sent successfully:', { messageId: result });
+    return { success: true, messageId: result };
   } catch (error) {
-    logger.error(`Error sending notification (attempt ${retryCount + 1}):`, error);
+    logger.error(`Error sending notification (attempt ${attempt}):`, error);
 
-    if (error.code === 'messaging/invalid-argument' || 
-        error.code === 'messaging/invalid-recipient') {
-      return { 
-        success: false, 
-        error: error.message,
-        code: error.code,
-        permanent: true 
-      };
+    // Handle invalid token error
+    if (error.errorInfo?.code === 'messaging/registration-token-not-registered') {
+      // Get user ID from token
+      try {
+        const token = message.token;
+        const user = await User.findOne({ fcmToken: token });
+        if (user) {
+          // Clear invalid token
+          user.fcmToken = null;
+          user.lastTokenUpdate = new Date();
+          await user.save();
+          logger.info('Cleared invalid FCM token for user:', user._id);
+        }
+      } catch (dbError) {
+        logger.error('Error clearing invalid token from database:', dbError);
+      }
+      return { success: false, error: 'Token invalid or not registered' };
     }
 
-    if (retryCount < MAX_RETRIES) {
-      await new Promise(resolve => 
-        setTimeout(resolve, RETRY_DELAY * Math.pow(2, retryCount))
-      );
-      return sendNotificationWithRetry(message, retryCount + 1);
+    if (attempt < MAX_RETRIES) {
+      logger.info(`Retrying notification in ${RETRY_DELAY}ms (attempt ${attempt + 1}/${MAX_RETRIES})`);
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      return sendNotificationWithRetry(message, attempt + 1);
     }
 
-    return { 
-      success: false, 
-      error: error.message,
-      code: error.code 
-    };
+    return { success: false, error: error.message };
   }
 };
 

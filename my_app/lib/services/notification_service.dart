@@ -1113,40 +1113,21 @@ class NotificationService {
         }
       }
 
-      // Get FCM token
+      // Delete any existing token
+      await FirebaseMessaging.instance.deleteToken();
+      _logger.info('Deleted existing FCM token');
+
+      // Get new FCM token
       _fcmToken = await FirebaseMessaging.instance.getToken();
       if (_fcmToken == null) {
         throw Exception('Failed to get FCM token');
       }
-      _logger.info('FCM Token received: ${_fcmToken!.substring(0, 10)}...');
+      _logger.info('New FCM Token received: ${_fcmToken!.substring(0, 10)}...');
 
       // Save token locally
       await _saveToken(_fcmToken!);
 
-      // Send token to backend
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        final token = prefs.getString('token');
-        if (token != null) {
-          await _apiService.post(
-            '/api/users/update-fcm-token',
-            {
-              'fcmToken': _fcmToken,
-              'deviceType': Platform.isIOS ? 'ios' : 'android',
-              'deviceInfo': await _getDeviceInfo(),
-            },
-            token,
-          );
-          _logger.info('FCM token sent to backend successfully');
-        } else {
-          _logger.error('No auth token available to send FCM token to backend');
-        }
-      } catch (e) {
-        _logger.error('Error sending FCM token to backend: $e');
-        // Don't rethrow as we still want to continue with the token we have
-      }
-
-      // Monitor token refresh
+      // Set up token refresh listener
       FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
         _logger.info('FCM Token refreshed: ${newToken.substring(0, 10)}...');
         _fcmToken = newToken;
@@ -1163,6 +1144,7 @@ class NotificationService {
                 'fcmToken': newToken,
                 'deviceType': Platform.isIOS ? 'ios' : 'android',
                 'deviceInfo': await _getDeviceInfo(),
+                'timestamp': DateTime.now().toIso8601String(),
               },
               token,
             );
