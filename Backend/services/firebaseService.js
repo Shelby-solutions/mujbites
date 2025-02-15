@@ -375,22 +375,45 @@ const sendNotificationToUser = async (userId, title, body, data = {}) => {
 // Function to get FCM token for a restaurant
 const getFcmTokenForRestaurant = async (restaurantId) => {
   try {
+    logger.info(`Getting FCM token for restaurant: ${restaurantId}`);
+
     const restaurant = await Restaurant.findById(restaurantId)
-      .populate('owner')
-      .select('owner');
+      .populate({
+        path: 'owner',
+        select: 'fcmToken deviceType lastTokenUpdate'
+      });
 
-    if (!restaurant || !restaurant.owner) {
-      logger.error(`Restaurant ${restaurantId} or owner not found`);
+    if (!restaurant) {
+      logger.error(`Restaurant not found: ${restaurantId}`);
       return null;
     }
 
-    const user = restaurant.owner;
-    if (!user.fcmToken) {
-      logger.error(`No FCM token found for restaurant owner (userId: ${user._id})`);
+    if (!restaurant.owner) {
+      logger.error(`Restaurant ${restaurantId} has no owner assigned`);
       return null;
     }
 
-    return user.fcmToken;
+    // Try to get the owner directly if population failed
+    let owner = restaurant.owner;
+    if (!owner.fcmToken) {
+      logger.info('Owner found but no FCM token in populated data, trying direct query');
+      owner = await User.findById(restaurant.owner._id).select('fcmToken deviceType lastTokenUpdate');
+    }
+
+    if (!owner || !owner.fcmToken) {
+      logger.error(`No FCM token found for restaurant owner (userId: ${restaurant.owner._id})`);
+      return null;
+    }
+
+    logger.info('Found FCM token for restaurant:', {
+      restaurantId,
+      ownerId: owner._id,
+      deviceType: owner.deviceType,
+      tokenPrefix: owner.fcmToken.substring(0, 10),
+      lastUpdate: owner.lastTokenUpdate
+    });
+
+    return owner.fcmToken;
   } catch (error) {
     logger.error('Error getting FCM token for restaurant:', error);
     return null;
