@@ -811,6 +811,21 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> with Auto
               _restaurantData?['address'] ?? 'Address',
               style: const TextStyle(fontSize: 16),
             ),
+            const SizedBox(height: 8),
+            if (_restaurantData?['owner']?['mobileNumber'] != null)
+              Row(
+                children: [
+                  const Icon(Icons.phone, size: 20, color: Colors.grey),
+                  const SizedBox(width: 8),
+                  Text(
+                    _restaurantData!['owner']['mobileNumber'],
+                    style: const TextStyle(
+                      fontSize: 16,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ],
+              ),
           ],
         ),
       ),
@@ -933,6 +948,9 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> with Auto
         '${indianTime.hour.toString().padLeft(2, '0')}:'
         '${indianTime.minute.toString().padLeft(2, '0')}';
 
+    // Determine if we should show customer details
+    final shouldShowCustomerDetails = ['Accepted', 'Delivered'].contains(status);
+
     return Opacity(
       opacity: isLoading ? 0.6 : 1.0,
       child: IgnorePointer(
@@ -962,14 +980,27 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> with Auto
                   ),
                 ),
                 const SizedBox(height: 8),
-                // Show customer details based on order status
+                // Show customer details only for accepted and delivered orders
                 if (customer != null) ...[
-                  Text(
-                    'Customer: ${customer['username'] ?? 'Anonymous'}',
-                    style: const TextStyle(fontWeight: FontWeight.w500),
-                  ),
-                  if (!['Cancelled'].contains(status)) 
-                    Text('Phone: ${customer['mobileNumber'] ?? 'N/A'}'),
+                  if (shouldShowCustomerDetails) ...[
+                    Text(
+                      'Customer: ${customer['username'] ?? 'Anonymous'}',
+                      style: const TextStyle(fontWeight: FontWeight.w500),
+                    ),
+                    Row(
+                      children: [
+                        const Icon(Icons.phone, size: 16, color: Colors.grey),
+                        const SizedBox(width: 4),
+                        Text(
+                          customer['mobileNumber'] ?? 'N/A',
+                          style: TextStyle(
+                            color: Colors.grey[800],
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   Text(
                     'Delivery Address:',
                     style: const TextStyle(fontWeight: FontWeight.w500),

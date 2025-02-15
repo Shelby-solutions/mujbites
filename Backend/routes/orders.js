@@ -90,7 +90,7 @@ router.get("/", authenticateToken, async (req, res) => {
     const orders = await Order.find({ customer: customerId })
       .populate("restaurant", "name") // Populate restaurant details
       .populate("items.menuItem", "name price") // Populate menu item details
-      .populate("customer", "username phone address") // Populate customer details
+      .populate("customer", "username mobileNumber address") // Populate customer details
       .sort({ createdAt: -1 });
 
     console.log("Orders fetched:", orders); // Debug log
@@ -130,7 +130,7 @@ router.get("/restaurant/:restaurantId", authenticateToken, async (req, res) => {
 
     // Fetch orders
     const orders = await Order.find(query)
-      .populate("customer", "username phone address")
+      .populate("customer", "username mobileNumber address")
       .populate("items.menuItem", "name price")
       .sort({ 
         ...(status === 'Accepted' ? { createdAt: 1 } : { createdAt: -1 })
@@ -171,7 +171,7 @@ router.patch('/:orderId/confirm', authenticateToken, async (req, res) => {
       req.params.orderId,
       { orderStatus: 'Accepted' },
       { new: true }
-    ).populate('customer', 'username phone address')
+    ).populate('customer', 'username mobileNumber address')
      .populate('items.menuItem', 'name price');
 
     if (!order) {
@@ -213,7 +213,7 @@ router.patch('/:orderId/deliver', authenticateToken, async (req, res) => {
       req.params.orderId,
       { orderStatus: 'Delivered' },
       { new: true }
-    ).populate('customer', 'username phone address')
+    ).populate('customer', 'username mobileNumber address')
      .populate('items.menuItem', 'name price');
 
     if (!order) {
