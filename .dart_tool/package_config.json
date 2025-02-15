@@ -87,19 +87,19 @@
     },
     {
       "name": "cached_network_image",
-      "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/cached_network_image-3.4.0",
+      "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/cached_network_image-3.3.1",
       "packageUri": "lib/",
       "languageVersion": "3.0"
     },
     {
       "name": "cached_network_image_platform_interface",
-      "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/cached_network_image_platform_interface-4.1.1",
+      "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/cached_network_image_platform_interface-4.0.0",
       "packageUri": "lib/",
       "languageVersion": "3.0"
     },
     {
       "name": "cached_network_image_web",
-      "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/cached_network_image_web-1.3.0",
+      "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/cached_network_image_web-1.2.0",
       "packageUri": "lib/",
       "languageVersion": "3.0"
     },
@@ -144,6 +144,12 @@
       "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/crypto-3.0.6",
       "packageUri": "lib/",
       "languageVersion": "3.4"
+    },
+    {
+      "name": "cupertino_icons",
+      "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/cupertino_icons-1.0.8",
+      "packageUri": "lib/",
+      "languageVersion": "3.1"
     },
     {
       "name": "dbus",
@@ -195,9 +201,9 @@
     },
     {
       "name": "file",
-      "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/file-7.0.1",
+      "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/file-6.1.4",
       "packageUri": "lib/",
-      "languageVersion": "3.0"
+      "languageVersion": "2.12"
     },
     {
       "name": "firebase_auth",
@@ -267,9 +273,9 @@
     },
     {
       "name": "flutter_cache_manager",
-      "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/flutter_cache_manager-3.4.1",
+      "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/flutter_cache_manager-3.3.1",
       "packageUri": "lib/",
-      "languageVersion": "3.0"
+      "languageVersion": "2.17"
     },
     {
       "name": "flutter_dotenv",
@@ -548,6 +554,12 @@
       "languageVersion": "3.2"
     },
     {
+      "name": "process",
+      "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/process-4.2.4",
+      "packageUri": "lib/",
+      "languageVersion": "2.14"
+    },
+    {
       "name": "provider",
       "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/provider-6.1.2",
       "packageUri": "lib/",
@@ -567,7 +579,7 @@
     },
     {
       "name": "rxdart",
-      "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/rxdart-0.28.0",
+      "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/rxdart-0.27.7",
       "packageUri": "lib/",
       "languageVersion": "2.12"
     },
@@ -831,9 +843,9 @@
     },
     {
       "name": "xdg_directories",
-      "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/xdg_directories-1.1.0",
+      "rootUri": "file:///Users/satwikkumar/.pub-cache/hosted/pub.dev/xdg_directories-0.2.0+3",
       "packageUri": "lib/",
-      "languageVersion": "3.3"
+      "languageVersion": "2.12"
     },
     {
       "name": "xml",
@@ -848,7 +860,7 @@
       "languageVersion": "3.0"
     }
   ],
-  "generated": "2025-02-15T03:07:34.723835Z",
+  "generated": "2025-02-15T14:39:03.783676Z",
   "generator": "pub",
   "generatorVersion": "3.7.0",
   "flutterRoot": "file:///opt/homebrew/Caskroom/flutter/3.29.0/flutter",

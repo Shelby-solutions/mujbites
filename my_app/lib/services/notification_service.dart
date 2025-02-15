@@ -85,7 +85,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         priority: Priority.max,
         enableVibration: true,
         enableLights: true,
-        ledColor: const Color.fromARGB(255, 255, 87, 34),
+        color: const Color.fromARGB(255, 255, 87, 34),
         ledOnMs: 1000,
         ledOffMs: 500,
         sound: const RawResourceAndroidNotificationSound('notification_sound'),
@@ -249,6 +249,30 @@ class NotificationService {
 
       // Initialize SharedPreferences
       _prefs = await SharedPreferences.getInstance();
+
+      // Initialize notification settings
+      const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const iOSSettings = DarwinInitializationSettings(
+        requestAlertPermission: true,
+        requestBadgePermission: true,
+        requestSoundPermission: true,
+        defaultPresentAlert: true,
+        defaultPresentBadge: true,
+        defaultPresentSound: true,
+      );
+
+      const initSettings = InitializationSettings(
+        android: androidSettings,
+        iOS: iOSSettings,
+      );
+
+      await flutterLocalNotificationsPlugin.initialize(
+        initSettings,
+        onDidReceiveNotificationResponse: (details) {
+          _handleNotificationResponse(details);
+        },
+        onDidReceiveBackgroundNotificationResponse: _handleBackgroundNotificationResponse,
+      );
 
       // Initialize Firebase
       await Firebase.initializeApp(

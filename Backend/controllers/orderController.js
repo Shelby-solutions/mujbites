@@ -1,7 +1,6 @@
 const Order = require('../models/orders');
 const Restaurant = require('../models/restaurantModel');
-const { sendOrderNotification } = require('../notifications/orderNotifications');
-const { sendNotificationToRestaurant, sendBatchNotifications, PRIORITY } = require('../services/firebaseService');
+const crossPlatformNotificationService = require('../services/crossPlatformNotificationService');
 const logger = require('../utils/logger');
 const { createError } = require('../utils/error');
 
@@ -12,7 +11,7 @@ const { createError } = require('../utils/error');
  */
 const createOrder = async (req, res, next) => {
   try {
-    const { restaurant, restaurantName, items, totalAmount, address } = req.body;
+    const { restaurant, restaurantName, items, totalAmount, address, platform = 'app' } = req.body;
     const customer = req.user.userId;
 
     // Input validation
@@ -42,79 +41,27 @@ const createOrder = async (req, res, next) => {
       totalAmount,
       address,
       orderStatus: "Placed",
+      platform // Track which platform the order came from
     });
 
     await order.save();
-    logger.info('New order created', { orderId: order._id });
+    logger.info('New order created', { 
+      orderId: order._id,
+      platform,
+      restaurantId: restaurant
+    });
 
-    // Send notifications
-    try {
-      const notificationPromises = [
-        // Notify customer
-        sendOrderNotification(
-          customer,
-          'ORDER_PLACED',
-          { 
-            restaurantName,
-            orderId: order._id,
-            totalAmount: order.totalAmount.toString()
-          }
-        ),
-
-        // Notify restaurant owner
-        Restaurant.findById(restaurant)
-          .populate("owner")
-          .then(restaurantData => {
-            if (restaurantData?.owner) {
-              return sendOrderNotification(
-                restaurantData.owner._id,
-                'NEW_ORDER',
-                { 
-                  restaurantName,
-                  orderId: order._id,
-                  totalAmount: order.totalAmount.toString()
-                }
-              );
-            }
-          }),
-
-        // Send notification to restaurant
-        sendNotificationToRestaurant(
-          order.restaurant,
-          'New Order Received!',
-          `Order #${order._id.toString().slice(-6)}`,
-          {
-            orderId: order._id.toString(),
-            restaurantId: order.restaurant,
-            restaurantName: order.restaurantName,
-            totalAmount: order.totalAmount.toString(),
-            status: order.orderStatus,
-            type: 'order',
-            priority: PRIORITY.HIGH
-          }
-        )
-      ];
-
-      // Wait for all notifications to be sent
-      const results = await Promise.allSettled(notificationPromises);
-      
-      // Log any notification failures
-      results.forEach((result, index) => {
-        if (result.status === 'rejected') {
-          logger.error('Notification failed', {
-            error: result.reason,
-            notificationIndex: index,
-            orderId: order._id
-          });
-        }
-      });
-    } catch (notificationError) {
-      logger.error('Error sending notifications', {
-        error: notificationError,
-        orderId: order._id
-      });
-      // Don't fail the order if notifications fail
-    }
+    // Send notifications using the cross-platform service
+    await crossPlatformNotificationService.handleOrderNotification({
+      orderId: order._id,
+      restaurantId: restaurant,
+      restaurantName,
+      customerId: customer,
+      totalAmount,
+      status: order.orderStatus,
+      items: validatedItems,
+      platform
+    });
 
     res.status(201).json({
       status: 'success',
@@ -201,7 +148,7 @@ const confirmOrder = async (req, res, next) => {
       orderId,
       { orderStatus: "Accepted" },
       { new: true }
-    );
+    ).populate('customer restaurant');
 
     if (!order) {
       throw createError(404, 'Order not found');
@@ -209,51 +156,21 @@ const confirmOrder = async (req, res, next) => {
 
     logger.info('Order confirmed', { orderId });
 
-    // Send notifications
-    try {
-      const notificationPromises = [
-        // Notify customer
-        sendOrderNotification(
-          order.customer,
-          'ORDER_CONFIRMED',
-          {
-            orderId: order._id,
-            restaurantName: order.restaurantName
-          }
-        ),
-
-        // Notify restaurant
-        sendNotificationToRestaurant(
-          order.restaurant,
-          'Order Accepted',
-          `Order #${order._id.toString().slice(-6)} has been accepted`,
-          {
-            orderId: order._id.toString(),
-            restaurantId: order.restaurant,
-            status: 'Accepted',
-            type: 'order',
-            priority: PRIORITY.NORMAL
-          }
-        )
-      ];
-
-      const results = await Promise.allSettled(notificationPromises);
-      
-      results.forEach((result, index) => {
-        if (result.status === 'rejected') {
-          logger.error('Confirmation notification failed', {
-            error: result.reason,
-            notificationIndex: index,
-            orderId
-          });
-        }
-      });
-    } catch (error) {
-      logger.error('Error sending confirmation notifications', {
-        error,
-        orderId
-      });
-    }
+    // Send notifications using cross-platform service
+    await crossPlatformNotificationService.handleOrderNotification({
+      orderId: order._id,
+      restaurantId: order.restaurant._id,
+      restaurantName: order.restaurantName,
+      customerId: order.customer._id,
+      totalAmount: order.totalAmount,
+      status: 'Accepted',
+      items: order.items,
+      platform: order.platform || 'app', // Use the platform from order or default to 'app'
+      notificationType: 'ORDER_CONFIRMED',
+      title: 'Order Confirmed',
+      message: `Your order at ${order.restaurantName} has been confirmed`,
+      url: `/orders/${order._id}`
+    });
 
     res.json({
       status: 'success',
@@ -286,7 +203,7 @@ const deliverOrder = async (req, res, next) => {
         updatedAt: new Date()
       },
       { new: true }
-    );
+    ).populate('customer restaurant');
 
     if (!order) {
       throw createError(404, 'Order not found');
@@ -294,51 +211,21 @@ const deliverOrder = async (req, res, next) => {
 
     logger.info('Order marked as delivered', { orderId });
 
-    // Send notifications
-    try {
-      const notificationPromises = [
-        // Notify customer
-        sendOrderNotification(
-          order.customer,
-          'ORDER_DELIVERED',
-          {
-            orderId: order._id,
-            restaurantName: order.restaurantName
-          }
-        ),
-
-        // Notify restaurant
-        sendNotificationToRestaurant(
-          order.restaurant,
-          'Order Delivered',
-          `Order #${order._id.toString().slice(-6)} has been delivered`,
-          {
-            orderId: order._id.toString(),
-            restaurantId: order.restaurant,
-            status: 'Delivered',
-            type: 'order',
-            priority: PRIORITY.NORMAL
-          }
-        )
-      ];
-
-      const results = await Promise.allSettled(notificationPromises);
-      
-      results.forEach((result, index) => {
-        if (result.status === 'rejected') {
-          logger.error('Delivery notification failed', {
-            error: result.reason,
-            notificationIndex: index,
-            orderId
-          });
-        }
-      });
-    } catch (error) {
-      logger.error('Error sending delivery notifications', {
-        error,
-        orderId
-      });
-    }
+    // Send notifications using cross-platform service
+    await crossPlatformNotificationService.handleOrderNotification({
+      orderId: order._id,
+      restaurantId: order.restaurant._id,
+      restaurantName: order.restaurantName,
+      customerId: order.customer._id,
+      totalAmount: order.totalAmount,
+      status: 'Delivered',
+      items: order.items,
+      platform: order.platform || 'app', // Use the platform from order or default to 'app'
+      notificationType: 'ORDER_DELIVERED',
+      title: 'Order Delivered',
+      message: `Your order from ${order.restaurantName} has been delivered`,
+      url: `/orders/${order._id}/review` // Direct to review page for web platform
+    });
 
     res.json({
       status: 'success',

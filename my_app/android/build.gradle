@@ -1,5 +1,5 @@
 buildscript {
-    ext.kotlin_version = '1.8.22'
+    ext.kotlin_version = '1.9.22'
     ext {
         compileSdkVersion = 34
         targetSdkVersion = 34
@@ -13,10 +13,9 @@ buildscript {
     }
 
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.2.1'
+        classpath 'com.android.tools.build:gradle:8.1.0'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
-        classpath 'com.google.gms:google-services:4.3.15'
-        classpath 'com.google.firebase:firebase-crashlytics-gradle:2.9.9'
+        classpath 'com.google.gms:google-services:4.4.0'
     }
 }
 
@@ -24,7 +23,65 @@ allprojects {
     repositories {
         google()
         mavenCentral()
-        maven { url "https://jitpack.io" }
+    }
+
+    // Add namespace configuration for all Android projects
+    afterEvaluate { project ->
+        if (project.hasProperty('android')) {
+            android {
+                namespace = getNamespaceForProject(project)
+                compileOptions {
+                    sourceCompatibility JavaVersion.VERSION_17
+                    targetCompatibility JavaVersion.VERSION_17
+                }
+            }
+            project.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+                kotlinOptions {
+                    jvmTarget = "17"
+                }
+            }
+        }
+    }
+}
+
+def getNamespaceForProject(project) {
+    switch (project.name) {
+        case 'app':
+            return "com.mujbites.mujbites"
+        case 'firebase_core':
+            return "io.flutter.plugins.firebase.core"
+        case 'firebase_auth':
+            return "io.flutter.plugins.firebase.auth"
+        case 'firebase_messaging':
+            return "io.flutter.plugins.firebase.messaging"
+        case 'connectivity_plus':
+            return "dev.fluttercommunity.plus.connectivity"
+        case 'device_info_plus':
+            return "dev.fluttercommunity.plus.device_info"
+        case 'audioplayers_android':
+            return "xyz.luan.audioplayers"
+        case 'flutter_local_notifications':
+            return "com.dexterous.flutterlocalnotifications"
+        case 'path_provider_android':
+            return "io.flutter.plugins.pathprovider"
+        case 'permission_handler_android':
+            return "com.baseflow.permissionhandler"
+        case 'rive_common':
+            return "app.rive.rive"
+        case 'package_info_plus':
+            return "dev.fluttercommunity.plus.packageinfo"
+        case 'shared_preferences_android':
+            return "io.flutter.plugins.sharedpreferences"
+        case 'smart_auth':
+            return "fman.ge.smart_auth"
+        case 'sqflite_android':
+            return "com.tekartik.sqflite"
+        case 'url_launcher_android':
+            return "io.flutter.plugins.urllauncher"
+        case 'wakelock_plus':
+            return "dev.fluttercommunity.plus.wakelock"
+        default:
+            return "com.mujbites.mujbites.${project.name}"
     }
 }
 

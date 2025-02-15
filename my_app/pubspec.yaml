@@ -33,12 +33,12 @@ dependencies:
   http: ^1.2.0
   shared_preferences: ^2.2.2
   provider: ^6.1.1
-  dio: ^5.0.0
+  dio: ^5.4.1
   cached_network_image: ^3.3.1
   sqflite: ^2.3.2
   path_provider: ^2.1.2
   encrypt: ^5.0.3
-  firebase_core: ^2.31.0
+  firebase_core: ^2.24.2
   firebase_auth: ^4.17.0
   firebase_messaging: ^14.7.20
   flutter_dotenv: ^5.1.0
@@ -46,7 +46,7 @@ dependencies:
   package_info_plus: ^8.2.1
   web_socket_channel: ^2.4.0
   device_info_plus: ^9.1.2
-  flutter_local_notifications: ^16.3.2
+  flutter_local_notifications: ^18.0.1
   google_fonts: ^6.1.0
   animated_text_kit: ^4.2.2
   shimmer: ^3.0.0
@@ -76,7 +76,7 @@ dev_dependencies:
   # activated in the `analysis_options.yaml` file located at the root of your
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
-  flutter_lints: ^2.0.0
+  flutter_lints: ^3.0.1
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
