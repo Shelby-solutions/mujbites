@@ -73,7 +73,8 @@ const getRestaurantById = async (req, res) => {
  */
 const getRestaurantByOwnerId = async (req, res) => {
   try {
-    const restaurant = await Restaurant.findOne({ owner: req.params.userId });
+    const restaurant = await Restaurant.findOne({ owner: req.params.userId })
+      .populate('owner', 'username mobileNumber');
     if (!restaurant) {
       return res.status(404).json({ message: 'Restaurant not found for this owner.' });
     }

@@ -66,12 +66,13 @@ class CustomNavbar extends StatelessWidget {
                   onTap: () => _handleNavigation(context, '/recommendations'),
                 ),
               if (isLoggedIn) ...[
-                _NavItem(
-                  icon: Icons.receipt_long_outlined,
-                  label: 'Orders',
-                  route: '/orders',
-                  onTap: () => _handleNavigation(context, '/orders'),
-                ),
+                if (userRole != 'restaurant')
+                  _NavItem(
+                    icon: Icons.receipt_long_outlined,
+                    label: 'Orders',
+                    route: '/orders',
+                    onTap: () => _handleNavigation(context, '/orders'),
+                  ),
                 if (userRole == 'restaurant')
                   _NavItem(
                     icon: Icons.restaurant_menu_outlined,
