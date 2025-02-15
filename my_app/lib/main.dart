@@ -28,6 +28,7 @@ import 'dart:typed_data';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'services/firebase_service.dart';
+import 'utils/logger.dart';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -147,8 +148,23 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   }
 }
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  try {
+    // Initialize Firebase
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+
+    // Initialize notification service
+    await NotificationService().initialize();
+
+    logger.info('App initialized successfully');
+  } catch (e, stackTrace) {
+    logger.error('Error initializing app', e, stackTrace);
+  }
+
   final prefs = await SharedPreferences.getInstance();
   final isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
   final token = prefs.getString('token');
@@ -187,14 +203,13 @@ void main() async {
     );
   }
 
-  // Initialize NotificationService
-  final notificationService = NotificationService();
-  await notificationService.initialize();
-
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => CartProvider()),
+        Provider<NotificationService>.value(
+          value: NotificationService(),
+        ),
       ],
       child: MyApp(initialRoute: isLoggedIn && token != null ? '/home' : '/login'),
     ),

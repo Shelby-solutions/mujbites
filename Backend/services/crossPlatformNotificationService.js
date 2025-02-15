@@ -2,6 +2,8 @@ const admin = require('firebase-admin');
 const logger = require('../utils/logger');
 const { sendNotificationToRestaurant, sendNotificationToUser } = require('./firebaseService');
 const WebSocketService = require('./websocketService');
+const User = require('../models/user');
+const Restaurant = require('../models/restaurantModel');
 
 class CrossPlatformNotificationService {
   constructor() {
@@ -31,69 +33,134 @@ class CrossPlatformNotificationService {
         notificationType
       });
 
-      const notificationPromises = [
-        // Send FCM notification to restaurant
-        this.sendRestaurantNotification(orderData),
+      // Get restaurant owner's FCM tokens
+      const restaurant = await Restaurant.findById(restaurantId).populate('owner');
+      if (!restaurant || !restaurant.owner) {
+        logger.error('Restaurant or owner not found', { restaurantId });
+        return;
+      }
 
+      const notificationPromises = [
         // Send FCM notification to customer
         this.sendCustomerNotification(orderData),
+
+        // Send FCM notification to restaurant owner
+        this.sendRestaurantOwnerNotification(restaurant.owner._id, orderData),
 
         // Send WebSocket notification for real-time updates
         this.sendWebSocketNotification(orderData)
       ];
 
-      await Promise.allSettled(notificationPromises);
-
-      logger.info('Cross-platform notifications sent successfully', {
-        orderId,
-        platform,
-        notificationType
+      const results = await Promise.allSettled(notificationPromises);
+      
+      // Log results
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+          logger.error('Notification failed:', {
+            error: result.reason,
+            index,
+            orderId
+          });
+        } else {
+          logger.info('Notification sent successfully:', {
+            index,
+            orderId,
+            result: result.value
+          });
+        }
       });
+
     } catch (error) {
       logger.error('Error in cross-platform notification:', error);
-      // Don't throw error to prevent order creation failure
     }
   }
 
-  async sendRestaurantNotification(orderData) {
-    const {
-      orderId,
-      restaurantId,
-      restaurantName,
-      totalAmount,
-      status,
-      notificationType,
-      platform
-    } = orderData;
+  async sendRestaurantOwnerNotification(ownerId, orderData) {
+    try {
+      const {
+        orderId,
+        restaurantId,
+        restaurantName,
+        totalAmount,
+        status,
+        notificationType,
+        platform
+      } = orderData;
 
-    // Create platform-specific notification data
-    const notificationData = {
-      type: notificationType,
-      orderId: orderId.toString(),
-      restaurantId,
-      restaurantName,
-      totalAmount: totalAmount.toString(),
-      status,
-      priority: this._getPriorityForType(notificationType),
-      platform,
-      timestamp: new Date().toISOString()
-    };
+      // Get owner's FCM tokens
+      const owner = await User.findById(ownerId);
+      if (!owner) {
+        logger.error('Owner not found', { ownerId });
+        return { success: false, error: 'Owner not found' };
+      }
 
-    // Add platform-specific data for web
-    if (platform === 'web') {
-      notificationData.url = `/restaurant/orders/${orderId}`;
-      notificationData.actions = this._getActionsForType(notificationType, 'restaurant');
+      // Get active tokens using the new method
+      const tokens = owner.getActiveFCMTokens();
+      if (tokens.length === 0) {
+        logger.error('No active FCM tokens found for owner', { ownerId });
+        return { success: false, error: 'No active FCM tokens' };
+      }
+
+      logger.info('Preparing to send FCM notifications to tokens:', tokens);
+
+      // Create notification payload
+      const notificationPayload = {
+        notification: {
+          title: this._getNotificationTitle(notificationType, 'restaurant'),
+          body: this._getNotificationBody(orderData, 'restaurant'),
+        },
+        data: {
+          type: notificationType,
+          url: platform === 'web' ? '/restaurant' : null,
+          orderId: orderId.toString(),
+          amount: totalAmount.toString(),
+          timestamp: new Date().toISOString(),
+          restaurantId: restaurantId.toString(),
+          restaurantName,
+          status,
+          platform
+        }
+      };
+
+      // Send to all active tokens
+      const results = await Promise.all(tokens.map(async (token) => {
+        try {
+          await admin.messaging().send({
+            token,
+            ...notificationPayload
+          });
+          // Update device last active timestamp
+          await owner.updateDevice({
+            fcmToken: token,
+            deviceInfo: { lastNotification: new Date().toISOString() }
+          });
+          return { success: true, token };
+        } catch (error) {
+          logger.error('Error sending to token:', { token, error });
+          if (error.code === 'messaging/registration-token-not-registered') {
+            // Remove invalid token
+            await owner.removeToken(token);
+            logger.info('Removed invalid token:', token);
+          }
+          return { success: false, token, error: error.message };
+        }
+      }));
+
+      const successCount = results.filter(r => r.success).length;
+      const failureCount = results.length - successCount;
+
+      return {
+        success: successCount > 0,
+        response: {
+          successCount,
+          failureCount,
+          results
+        }
+      };
+    } catch (error) {
+      logger.error('Error in sendRestaurantOwnerNotification:', error);
+      return { success: false, error: error.message };
     }
-
-    const title = this._getNotificationTitle(notificationType, 'restaurant');
-    const body = this._getNotificationBody(orderData, 'restaurant');
-
-    return sendNotificationToRestaurant(
-      restaurantId,
-      title,
-      body,
-      notificationData
-    );
   }
 
   async sendCustomerNotification(orderData) {
@@ -108,32 +175,74 @@ class CrossPlatformNotificationService {
       url
     } = orderData;
 
-    // Create platform-specific notification data
-    const notificationData = {
-      type: notificationType,
-      orderId: orderId.toString(),
-      restaurantName,
-      totalAmount: totalAmount.toString(),
-      status,
-      platform,
-      timestamp: new Date().toISOString()
-    };
+    try {
+      const customer = await User.findById(customerId);
+      if (!customer) {
+        logger.error('Customer not found', { customerId });
+        return { success: false, error: 'Customer not found' };
+      }
 
-    // Add platform-specific data for web
-    if (platform === 'web') {
-      notificationData.url = url || `/orders/${orderId}`;
-      notificationData.actions = this._getActionsForType(notificationType, 'customer');
+      // Get active tokens
+      const tokens = customer.getActiveFCMTokens();
+      if (tokens.length === 0) {
+        logger.error('No active FCM tokens found for customer', { customerId });
+        return { success: false, error: 'No active FCM tokens' };
+      }
+
+      const notificationPayload = {
+        notification: {
+          title: this._getNotificationTitle(notificationType, 'customer'),
+          body: this._getNotificationBody(orderData, 'customer'),
+        },
+        data: {
+          type: notificationType,
+          url: platform === 'web' ? (url || `/orders/${orderId}`) : null,
+          orderId: orderId.toString(),
+          amount: totalAmount.toString(),
+          timestamp: new Date().toISOString(),
+          restaurantName,
+          status,
+          platform
+        }
+      };
+
+      // Send to all active tokens
+      const results = await Promise.all(tokens.map(async (token) => {
+        try {
+          await admin.messaging().send({
+            token,
+            ...notificationPayload
+          });
+          // Update device last active timestamp
+          await customer.updateDevice({
+            fcmToken: token,
+            deviceInfo: { lastNotification: new Date().toISOString() }
+          });
+          return { success: true, token };
+        } catch (error) {
+          if (error.code === 'messaging/registration-token-not-registered') {
+            // Remove invalid token
+            await customer.removeToken(token);
+            logger.info('Removed invalid token:', token);
+          }
+          return { success: false, token, error: error.message };
+        }
+      }));
+
+      const successCount = results.filter(r => r.success).length;
+      return {
+        success: successCount > 0,
+        message: 'Notifications sent',
+        response: {
+          successCount,
+          failureCount: results.length - successCount,
+          results
+        }
+      };
+    } catch (error) {
+      logger.error('Error sending customer notification:', error);
+      return { success: false, error: error.message };
     }
-
-    const title = this._getNotificationTitle(notificationType, 'customer');
-    const body = this._getNotificationBody(orderData, 'customer');
-
-    return sendNotificationToUser(
-      customerId,
-      title,
-      body,
-      notificationData
-    );
   }
 
   async sendWebSocketNotification(orderData) {

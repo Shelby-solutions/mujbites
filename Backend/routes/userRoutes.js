@@ -10,6 +10,7 @@ const Order = require('../models/orders');
 const authenticateToken = require('../middleware/authMiddleware');
 const userController = require('../controllers/userController'); // Import userController
 const { loginValidationRules, registerValidationRules } = require('../middleware/validation');
+const logger = require('../utils/logger');
 
 // --- Helper Function ---
 const isAdmin = (req, res, next) => {
@@ -258,63 +259,87 @@ router.post('/logout', authenticateToken, async (req, res) => {
   }
 });
 
-// Update FCM Token
-router.post('/update-fcm-token', authenticateToken, async (req, res) => {
+/**
+ * @route POST /api/users/fcm-token
+ * @desc Update user's FCM token and device info
+ * @access Private
+ */
+router.post('/fcm-token', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
-    const { fcmToken, deviceType, deviceInfo, appVersion, timestamp } = req.body;
+    const {
+      fcmToken,
+      deviceType = 'unknown',
+      deviceInfo = {},
+      platform = 'app'
+    } = req.body;
 
     // Validate required fields
     if (!fcmToken) {
       return res.status(400).json({ message: 'FCM token is required.' });
     }
 
-    console.log('Updating FCM token for user:', {
+    logger.info('Updating FCM token for user:', {
       userId,
       role: req.user.role,
       deviceType,
+      platform,
       tokenPrefix: fcmToken.substring(0, 10)
     });
 
-    // Update user's FCM token in the database
-    const updateData = {
-      fcmToken,
-      deviceType: deviceType || 'unknown',
-      deviceInfo: deviceInfo || 'unknown',
-      appVersion: appVersion || '1.0.0',
-      lastTokenUpdate: timestamp ? new Date(timestamp) : new Date()
-    };
-
-    const user = await User.findByIdAndUpdate(
-      userId,
-      updateData,
-      { new: true }
-    ).select('role restaurant fcmToken deviceType lastTokenUpdate');
-
+    // Get user and update device info
+    const user = await User.findById(userId);
     if (!user) {
-      console.error('User not found when updating FCM token:', userId);
+      logger.error('User not found when updating FCM token:', userId);
       return res.status(404).json({ message: 'User not found.' });
     }
 
-    console.log('FCM token updated successfully:', {
+    // Add browser/platform specific info for web platform
+    const enhancedDeviceInfo = {
+      ...deviceInfo,
+      platform,
+      lastUpdate: new Date().toISOString()
+    };
+
+    if (platform === 'web') {
+      enhancedDeviceInfo.userAgent = req.headers['user-agent'];
+      enhancedDeviceInfo.language = req.headers['accept-language'];
+    }
+
+    // Update device information
+    await user.updateDevice({
+      fcmToken,
+      deviceType,
+      deviceInfo: enhancedDeviceInfo
+    });
+
+    // Get active tokens for logging
+    const activeTokens = user.getActiveFCMTokens();
+
+    logger.info('FCM token updated successfully:', {
       userId: user._id,
       role: user.role,
       restaurantId: user.restaurant,
-      deviceType: user.deviceType,
-      lastUpdate: user.lastTokenUpdate
+      deviceType,
+      platform,
+      activeTokenCount: activeTokens.length
     });
 
-    res.status(200).json({ 
+    res.status(200).json({
       message: 'FCM token updated successfully',
       user: {
         role: user.role,
-        deviceType: user.deviceType,
-        lastUpdate: user.lastTokenUpdate
+        deviceType,
+        platform,
+        activeTokens: activeTokens.length
       }
     });
   } catch (error) {
-    console.error('Error updating FCM token:', error);
-    res.status(500).json({ message: 'Server error.', error: error.message });
+    logger.error('Error updating FCM token:', error);
+    res.status(500).json({ 
+      message: 'Server error.',
+      error: error.message 
+    });
   }
 });
 
