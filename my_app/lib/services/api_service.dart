@@ -753,36 +753,36 @@ class ApiService {
 
   Future<void> updateFcmToken(String token) async {
     try {
-      // Get the authentication token
       final authToken = await UserPreferences.getToken();
       if (authToken == null) {
         throw Exception('Authentication token not found');
       }
 
-      final headers = {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $authToken',
-      };
+      logger.info('Updating FCM token');
 
       final response = await http.post(
-        getUri('/users/update-fcm-token'),
-        headers: headers,
+        getUri('/users/fcm-token'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $authToken',
+        },
         body: jsonEncode({
-          'fcmToken': token,
-          'deviceType': Platform.isAndroid ? 'android' : 'ios',
-          'appVersion': await _getAppVersion(),
-          'timestamp': DateTime.now().toIso8601String(),
+          'token': token,
+          'device': Platform.isIOS ? 'ios' : 'android', // Default to android for non-iOS
         }),
       ).timeout(const Duration(seconds: 10));
 
-      if (response.statusCode != 200) {
+      if (response.statusCode == 200) {
+        final responseData = jsonDecode(response.body);
+        logger.info('FCM token updated successfully:', {
+          'activeTokens': responseData['user']['activeTokens'],
+        });
+      } else {
         final responseData = jsonDecode(response.body);
         throw Exception('Failed to update FCM token: ${responseData['message'] ?? response.body}');
       }
-
-      print('FCM token updated successfully');
     } catch (e) {
-      print('Error updating FCM token: $e');
+      logger.error('Error updating FCM token:', e);
       rethrow;
     }
   }

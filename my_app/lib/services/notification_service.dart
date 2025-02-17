@@ -1404,44 +1404,23 @@ class NotificationService {
       });
 
       // Get device info
-      final deviceInfo = await _getDeviceInfo();
-      final platform = Platform.isAndroid ? 'android' : Platform.isIOS ? 'ios' : 'web';
-
-      // Get auth token
-      final prefs = await SharedPreferences.getInstance();
-      final authToken = prefs.getString('token');
+      final deviceData = await _getDeviceInfo();
       
-      if (authToken == null) {
-        logger.error('No auth token found when registering FCM token');
-        return;
-      }
+      // Prepare token registration data
+      final tokenData = {
+        'token': fcmToken,
+        'device': Platform.isIOS ? 'ios' : 'android', // Default to android for non-iOS
+      };
 
-      // Send token to backend with device info and expiration
       final response = await _apiService.post(
-        '/api/users/fcm-token',
-        {
-          'fcmToken': fcmToken,
-          'deviceType': platform,
-          'deviceInfo': {
-            ...deviceInfo,
-            'appVersion': await _getAppVersion(),
-            'platform': platform,
-            'registeredAt': DateTime.now().toIso8601String(),
-            'expiresAt': DateTime.now().add(const Duration(days: 30)).toIso8601String(),
-          },
-        },
-        authToken,
+        '/users/fcm-token',
+        tokenData,
+        await UserPreferences.getToken() ?? '',
       );
 
-      if (response['success'] == true) {
-        logger.info('FCM token registered successfully');
-        await prefs.setString('lastTokenUpdate', DateTime.now().toIso8601String());
-      } else {
-        logger.error('Failed to register FCM token:', {
-          'error': response['message'] ?? 'Unknown error',
-          'response': response,
-        });
-      }
+      logger.info('FCM token registered successfully:', {
+        'activeTokens': response['user']['activeTokens'],
+      });
     } catch (e, stackTrace) {
       logger.error('Error registering FCM token:', e, stackTrace);
     }

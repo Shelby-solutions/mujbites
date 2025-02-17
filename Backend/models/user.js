@@ -1,30 +1,22 @@
 const mongoose = require('mongoose');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 
-const deviceSchema = new mongoose.Schema({
-  fcmToken: {
+// FCM Token Schema
+const fcmTokenSchema = new mongoose.Schema({
+  token: {
     type: String,
     required: true
   },
-  deviceType: {
+  device: {
     type: String,
-    enum: ['android', 'ios', 'web', 'unknown'],
-    default: 'unknown'
+    required: true,
+    default: 'web'
   },
-  deviceInfo: {
-    type: Map,
-    of: String,
-    default: new Map()
-  },
-  lastActive: {
+  lastUsed: {
     type: Date,
     default: Date.now
-  },
-  expiresAt: {
-    type: Date,
-    default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days from now
   }
-}, { _id: false });
+});
 
 const userSchema = new mongoose.Schema({
   username: {
@@ -55,31 +47,7 @@ const userSchema = new mongoose.Schema({
     ref: 'Restaurant',
     default: null
   },
-  devices: {
-    type: [deviceSchema],
-    default: []
-  },
-  fcmToken: {
-    type: String,
-    default: null,
-    sparse: true,
-    deprecated: true
-  },
-  deviceType: {
-    type: String,
-    enum: ['android', 'ios', 'web', 'unknown'],
-    default: 'unknown',
-    deprecated: true
-  },
-  appVersion: {
-    type: String,
-    default: '1.0.0'
-  },
-  lastTokenUpdate: {
-    type: Date,
-    default: null,
-    deprecated: true
-  },
+  fcmTokens: [fcmTokenSchema],
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
   isActive: { type: Boolean, default: true },
@@ -88,7 +56,7 @@ const userSchema = new mongoose.Schema({
   timestamps: true
 });
 
-userSchema.index({ 'devices.fcmToken': 1 });
+userSchema.index({ 'fcmTokens.token': 1 });
 
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
@@ -101,21 +69,6 @@ userSchema.pre('save', async function(next) {
       if (restaurant && !this.restaurant) {
         this.restaurant = restaurant._id;
       }
-    }
-    if (this.fcmToken && !this.devices.some(d => d.fcmToken === this.fcmToken)) {
-      this.devices.push({
-        fcmToken: this.fcmToken,
-        deviceType: this.deviceType || 'unknown',
-        deviceInfo: new Map([['migrated', 'true']]),
-        lastActive: this.lastTokenUpdate || new Date()
-      });
-      this.fcmToken = null;
-      this.deviceType = 'unknown';
-      this.lastTokenUpdate = null;
-    }
-    if (this.isModified('devices')) {
-      const now = new Date();
-      this.devices = this.devices.filter(device => device.expiresAt > now);
     }
     next();
   } catch (error) {
@@ -134,91 +87,78 @@ userSchema.methods.comparePassword = async function (candidatePassword) {
 userSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.password;
-  if (obj.devices) {
-    obj.devices = obj.devices.map(device => ({
-      ...device,
-      deviceInfo: Object.fromEntries(device.deviceInfo)
-    }));
-  }
   return obj;
 };
 
-userSchema.methods.updateDevice = async function(deviceData) {
-  const { fcmToken, deviceType, deviceInfo } = deviceData;
+userSchema.methods.updateFCMToken = async function({ token, device }) {
+  // Find existing token
+  const existingTokenIndex = this.fcmTokens.findIndex(t => t.token === token);
   
-  // Remove expired tokens first
-  this.devices = this.devices.filter(device => {
-    return device.expiresAt > new Date() || !device.expiresAt;
-  });
-  
-  const existingDeviceIndex = this.devices.findIndex(d => d.fcmToken === fcmToken);
-  
-  if (existingDeviceIndex >= 0) {
-    // Update existing device
-    this.devices[existingDeviceIndex] = {
-      ...this.devices[existingDeviceIndex],
-      deviceType: deviceType || this.devices[existingDeviceIndex].deviceType,
-      deviceInfo: new Map([
-        ...this.devices[existingDeviceIndex].deviceInfo,
-        ...(deviceInfo || {})
-      ]),
-      lastActive: new Date(),
-      expiresAt: deviceInfo?.expiresAt ? new Date(deviceInfo.expiresAt) : 
-                 new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days from now
-    };
+  if (existingTokenIndex !== -1) {
+    // Update existing token's lastUsed
+    this.fcmTokens[existingTokenIndex].lastUsed = new Date();
   } else {
-    // Add new device
-    this.devices.push({
-      fcmToken,
-      deviceType: deviceType || 'unknown',
-      deviceInfo: new Map(Object.entries(deviceInfo || {})),
-      lastActive: new Date(),
-      expiresAt: deviceInfo?.expiresAt ? new Date(deviceInfo.expiresAt) : 
-                 new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days from now
+    // Add new token
+    this.fcmTokens.push({
+      token,
+      device,
+      lastUsed: new Date()
     });
+    
+    // Keep only the 5 most recently used tokens
+    if (this.fcmTokens.length > 5) {
+      this.fcmTokens.sort((a, b) => b.lastUsed - a.lastUsed);
+      this.fcmTokens = this.fcmTokens.slice(0, 5);
+    }
   }
-
-  // Keep only the 5 most recently active devices
-  if (this.devices.length > 5) {
-    this.devices.sort((a, b) => b.lastActive - a.lastActive);
-    this.devices = this.devices.slice(0, 5);
-  }
-
-  return this.save();
-};
-
-userSchema.methods.getActiveFCMTokens = function() {
-  const now = new Date();
-  return this.devices
-    .filter(device => device.expiresAt > now)
-    .map(device => device.fcmToken);
-};
-
-userSchema.methods.removeExpiredTokens = async function() {
-  const now = new Date();
-  const originalCount = this.devices.length;
   
-  this.devices = this.devices.filter(device => device.expiresAt > now);
-  
-  if (this.devices.length < originalCount) {
-    return this.save();
-  }
+  await this.save();
   return this;
 };
 
-// Add a static method to clean up expired tokens across all users
-userSchema.statics.cleanupExpiredTokens = async function() {
-  const now = new Date();
-  const result = await this.updateMany(
-    { 'devices.expiresAt': { $lt: now } },
-    { $pull: { devices: { expiresAt: { $lt: now } } } }
-  );
-  return result;
+userSchema.methods.getActiveFCMTokens = function() {
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  return this.fcmTokens.filter(token => token.lastUsed > thirtyDaysAgo);
 };
 
-userSchema.methods.removeToken = async function(token) {
-  this.devices = this.devices.filter(device => device.fcmToken !== token);
+userSchema.methods.cleanupOldTokens = async function() {
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const oldLength = this.fcmTokens.length;
+  
+  this.fcmTokens = this.fcmTokens.filter(token => token.lastUsed > thirtyDaysAgo);
+  
+  if (oldLength !== this.fcmTokens.length) {
+    await this.save();
+  }
+  
+  return {
+    userId: this._id,
+    removedCount: oldLength - this.fcmTokens.length,
+    remainingCount: this.fcmTokens.length
+  };
+};
+
+userSchema.methods.removeToken = async function(tokenToRemove) {
+  this.fcmTokens = this.fcmTokens.filter(t => t.token !== tokenToRemove);
   return this.save();
+};
+
+// Static method to clean up old tokens across all users
+userSchema.statics.cleanupOldTokens = async function() {
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  
+  const users = await this.find({
+    'fcmTokens.lastUsed': { $lt: thirtyDaysAgo }
+  });
+  
+  const results = await Promise.all(
+    users.map(user => user.cleanupOldTokens())
+  );
+  
+  return {
+    usersProcessed: users.length,
+    results
+  };
 };
 
 module.exports = mongoose.model('User', userSchema);

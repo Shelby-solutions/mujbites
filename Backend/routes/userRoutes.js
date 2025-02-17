@@ -261,84 +261,91 @@ router.post('/logout', authenticateToken, async (req, res) => {
 
 /**
  * @route POST /api/users/fcm-token
- * @desc Update user's FCM token and device info
+ * @desc Update user's FCM token
  * @access Private
  */
 router.post('/fcm-token', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.userId;
     const {
-      fcmToken,
-      deviceType = 'unknown',
-      deviceInfo = {},
-      platform = 'app'
+      token,
+      device = 'web'
     } = req.body;
 
     // Validate required fields
-    if (!fcmToken) {
+    if (!token) {
+      logger.error('FCM token registration failed: Token missing', { userId });
       return res.status(400).json({ message: 'FCM token is required.' });
     }
 
-    logger.info('Updating FCM token for user:', {
+    logger.info('Processing FCM token registration:', {
       userId,
       role: req.user.role,
-      deviceType,
-      platform,
-      tokenPrefix: fcmToken.substring(0, 10)
+      device,
+      tokenPrefix: token.substring(0, 10)
     });
 
-    // Get user and update device info
+    // Get user and update token
     const user = await User.findById(userId);
     if (!user) {
-      logger.error('User not found when updating FCM token:', userId);
+      logger.error('FCM token registration failed: User not found', { userId });
       return res.status(404).json({ message: 'User not found.' });
     }
 
-    // Add browser/platform specific info for web platform
-    const enhancedDeviceInfo = {
-      ...deviceInfo,
-      platform,
-      lastUpdate: new Date().toISOString()
-    };
-
-    if (platform === 'web') {
-      enhancedDeviceInfo.userAgent = req.headers['user-agent'];
-      enhancedDeviceInfo.language = req.headers['accept-language'];
-    }
-
-    // Update device information
-    await user.updateDevice({
-      fcmToken,
-      deviceType,
-      deviceInfo: enhancedDeviceInfo
+    // Update FCM token
+    await user.updateFCMToken({
+      token,
+      device
     });
 
     // Get active tokens for logging
     const activeTokens = user.getActiveFCMTokens();
 
-    logger.info('FCM token updated successfully:', {
+    logger.info('FCM token registration successful:', {
       userId: user._id,
       role: user.role,
       restaurantId: user.restaurant,
-      deviceType,
-      platform,
+      device,
       activeTokenCount: activeTokens.length
     });
 
     res.status(200).json({
+      success: true,
       message: 'FCM token updated successfully',
       user: {
         role: user.role,
-        deviceType,
-        platform,
+        device,
         activeTokens: activeTokens.length
       }
     });
   } catch (error) {
-    logger.error('Error updating FCM token:', error);
+    logger.error('FCM token registration error:', error);
     res.status(500).json({ 
+      success: false,
       message: 'Server error.',
       error: error.message 
+    });
+  }
+});
+
+// Add a cleanup route for old tokens (Admin only)
+router.post('/cleanup-old-tokens', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const result = await User.cleanupOldTokens();
+    
+    logger.info('Cleaned up old tokens:', result);
+    
+    res.status(200).json({
+      success: true,
+      message: 'Old tokens cleaned up successfully',
+      result
+    });
+  } catch (error) {
+    logger.error('Error cleaning up old tokens:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error cleaning up old tokens',
+      error: error.message
     });
   }
 });
