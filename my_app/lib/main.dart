@@ -33,116 +33,25 @@ import 'utils/logger.dart';
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
-    // Enable wakelock to ensure processing completes
+    // Keep device awake while processing notification
     await WakelockPlus.enable();
     
-    // Initialize Firebase first
+    // Initialize Firebase
     await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
     
-    // Initialize notifications plugin with settings
-    final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
-    
-    // Initialize platform specific settings
-    await flutterLocalNotificationsPlugin.initialize(
-      const InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-        iOS: DarwinInitializationSettings(
-          requestAlertPermission: true,
-          requestBadgePermission: true,
-          requestSoundPermission: true,
-        ),
-      ),
-    );
+    logger.info('Background message received:', {
+      'messageId': message.messageId,
+      'data': message.data,
+      'notification': '${message.notification?.title}, ${message.notification?.body}'
+    });
 
-    // Create notification channel for Android
-    if (Platform.isAndroid) {
-      await flutterLocalNotificationsPlugin
-          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-          ?.createNotificationChannel(
-        const AndroidNotificationChannel(
-          'new_orders',
-          'New Orders',
-          description: 'High priority notifications for new incoming orders.',
-          importance: Importance.max,
-          playSound: true,
-          enableVibration: true,
-          enableLights: true,
-          ledColor: Color.fromARGB(255, 255, 87, 34),
-        ),
-      );
-    }
-    
-    // Debug logs
-    print('Background message received:');
-    print('Message ID: ${message.messageId}');
-    print('Data: ${message.data}');
-    print('Notification: ${message.notification?.title}, ${message.notification?.body}');
-    
-    if (message.notification != null || message.data.isNotEmpty) {
-      final notificationId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      final notificationType = message.data['type']?.toString().toUpperCase();
-      
-      // Create notification details
-      final androidDetails = AndroidNotificationDetails(
-        'new_orders',
-        'New Orders',
-        channelDescription: 'High priority notifications for new incoming orders.',
-        importance: Importance.max,
-        priority: Priority.max,
-        enableVibration: true,
-        vibrationPattern: Int64List.fromList([0, 500, 200, 500]),
-        enableLights: true,
-        ledColor: const Color.fromARGB(255, 255, 87, 34),
-        playSound: true,
-        sound: const RawResourceAndroidNotificationSound('notification_sound'),
-        category: AndroidNotificationCategory.message,
-        fullScreenIntent: true,
-        visibility: NotificationVisibility.public,
-      );
+    // Process the notification using NotificationService
+    final notificationService = NotificationService();
+    await notificationService.initialize();
+    await notificationService.showBackgroundNotification(message);
 
-      // Show notification
-      await flutterLocalNotificationsPlugin.show(
-        notificationId,
-        message.notification?.title ?? 'New Order',
-        message.notification?.body ?? 'New order received!',
-        NotificationDetails(
-          android: androidDetails,
-          iOS: const DarwinNotificationDetails(
-            presentAlert: true,
-            presentBadge: true,
-            presentSound: true,
-            sound: 'notification_sound.aiff',
-            interruptionLevel: InterruptionLevel.timeSensitive,
-          ),
-        ),
-        payload: json.encode(message.data),
-      );
-
-      // Play sound for new orders
-      if (notificationType == 'ORDER_PLACED') {
-        try {
-          final player = AudioPlayer();
-          await player.play(AssetSource('sounds/notification_sound.mp3'));
-          await Future.delayed(const Duration(seconds: 2));
-          await player.dispose();
-        } catch (e) {
-          print('Error playing notification sound: $e');
-        }
-      }
-
-      // Vibrate for Android
-      if (Platform.isAndroid) {
-        try {
-          await HapticFeedback.vibrate();
-        } catch (e) {
-          print('Error during vibration: $e');
-        }
-      }
-    }
   } catch (e, stackTrace) {
-    print('Error in background message handler:');
-    print('Error: $e');
-    print('Stack trace: $stackTrace');
+    logger.error('Error in background message handler:', e, stackTrace);
   } finally {
     await WakelockPlus.disable();
   }
@@ -152,57 +61,120 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   try {
+    print('Starting app initialization...');
+    
     // Initialize Firebase
+    print('Initializing Firebase...');
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+    print('Firebase initialized successfully');
+
+    // Set up notification channels before initializing the service
+    if (Platform.isAndroid) {
+      print('Setting up Android notification channels...');
+      final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+      
+      const androidChannel = AndroidNotificationChannel(
+          'new_orders',
+          'New Orders',
+          description: 'High priority notifications for new incoming orders.',
+          importance: Importance.max,
+          playSound: true,
+          enableVibration: true,
+          enableLights: true,
+          ledColor: Color.fromARGB(255, 255, 87, 34),
+      );
+
+      await flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(androidChannel);
+          
+      print('Android notification channel created successfully');
+    }
 
     // Initialize notification service
-    await NotificationService().initialize();
+    print('Initializing notification service...');
+    final notificationService = NotificationService();
+    await notificationService.initialize();
+    print('Notification service initialized successfully');
 
-    logger.info('App initialized successfully');
+    // Set up foreground message handler
+    print('Setting up foreground message handler...');
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
+      print('Foreground message received:');
+      print('- Message ID: ${message.messageId}');
+      print('- Data: ${message.data}');
+      print('- Notification: ${message.notification?.title}, ${message.notification?.body}');
+
+      await notificationService.handleForegroundMessage(message);
+    });
+
+    // Set up background message handler
+    print('Setting up background message handler...');
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+    // Handle notification open events
+    print('Setting up notification open handler...');
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      print('App opened from notification:');
+      print('- Message ID: ${message.messageId}');
+      print('- Data: ${message.data}');
+
+      // Handle navigation based on notification type
+      if (message.data['type'] == 'ORDER_PLACED' || message.data['type'] == 'NEW_ORDER') {
+        final orderId = message.data['orderId'];
+        if (orderId != null) {
+          print('Navigating to order details for order: $orderId');
+          // Navigator.pushNamed(context, '/orders/$orderId');
+        }
+      }
+    });
+
+    // Request notification permissions
+    if (!kIsWeb) {
+      print('Requesting notification permissions...');
+      final settings = await FirebaseMessaging.instance.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+        provisional: false,
+        criticalAlert: true,
+      );
+      
+      print('Notification permission status:');
+      print('- Authorization Status: ${settings.authorizationStatus}');
+      print('- Alert: ${settings.alert}');
+      print('- Sound: ${settings.sound}');
+      print('- Badge: ${settings.badge}');
+    }
+
+    print('App initialization completed successfully');
   } catch (e, stackTrace) {
-    logger.error('Error initializing app', e, stackTrace);
+    print('Error initializing app:');
+    print('Error: $e');
+    print('Stack trace: $stackTrace');
   }
 
+  print('Loading user preferences...');
   final prefs = await SharedPreferences.getInstance();
   final isLoggedIn = prefs.getBool('isLoggedIn') ?? false;
   final token = prefs.getString('token');
+  print('User logged in: $isLoggedIn');
   
-  // Load environment variables
-  await DefaultFirebaseOptions.loadEnv();
-  
-  // Initialize Firebase
-  final firebaseService = FirebaseService();
-  await firebaseService.initialize();
-  
+  // Initialize other services
+  print('Initializing user preferences...');
   await UserPreferences.init();
+  print('User preferences initialized');
   
   // Initialize sqflite database
+  print('Initializing local database...');
   final databasesPath = await getDatabasesPath();
   final path = join(databasesPath, 'cache.db');
   await openDatabase(path, version: 1);
-  
-  // Set background message handler
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  print('Local database initialized');
 
-  // Request notification permissions
-  if (!kIsWeb) {
-    await FirebaseMessaging.instance.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-      provisional: false,
-    );
-
-    // Set foreground notification presentation options
-    await FirebaseMessaging.instance.setForegroundNotificationPresentationOptions(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
-  }
-
+  print('Starting app with initial route: ${isLoggedIn && token != null ? '/home' : '/login'}');
   runApp(
     MultiProvider(
       providers: [
@@ -257,14 +229,22 @@ class MyApp extends StatelessWidget {
       },
       onGenerateRoute: (settings) {
         // Handle dynamic routes
-        if (settings.name?.startsWith('/restaurant/') ?? false) {
-          final restaurantId = settings.name!.split('/').last;
+        final uri = Uri.parse(settings.name ?? '');
+        
+        if (uri.pathSegments.first == 'restaurant') {
+          final restaurantId = uri.pathSegments.last;
           return MaterialPageRoute(
             builder: (context) => RestaurantScreen(restaurantId: restaurantId),
+          );
+        } else if (uri.pathSegments.first == 'orders' && uri.pathSegments.length > 1) {
+          final orderId = uri.pathSegments.last;
+          return MaterialPageRoute(
+            builder: (context) => OrdersScreen(initialOrderId: orderId),
           );
         }
         return null;
       },
+      navigatorKey: GlobalKey<NavigatorState>(),
     );
   }
 }

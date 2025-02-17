@@ -29,6 +29,7 @@ import 'package:collection/collection.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import '../utils/notification_channels.dart';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -219,6 +220,7 @@ class NotificationService {
   final _apiService = ApiService();
   final Set<String> _subscribedTopics = {};
   String? _fcmToken;
+  String? _userRole;
 
   // Callback functions
   Function(Map<String, dynamic>)? onNewOrder;
@@ -265,10 +267,7 @@ class NotificationService {
 
       await flutterLocalNotificationsPlugin.initialize(
         initSettings,
-        onDidReceiveNotificationResponse: (details) {
-          _handleNotificationResponse(details);
-        },
-        onDidReceiveBackgroundNotificationResponse: _handleBackgroundNotificationResponse,
+        onDidReceiveNotificationResponse: _onNotificationTapped,
       );
 
       // Initialize Firebase
@@ -369,7 +368,7 @@ class NotificationService {
       }
 
       // Set up message handlers
-      FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
+      FirebaseMessaging.onMessage.listen(handleForegroundMessage);
       FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
       FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
@@ -386,6 +385,9 @@ class NotificationService {
       // Initialize audio player
       await _audioPlayer.setSource(AssetSource('sounds/notification_sound.mp3'));
       _logger.info('Audio player initialized');
+
+      // Load user role
+      _userRole = await _prefs.getString('role');
 
       _initialized = true;
       _logger.info('NotificationService initialization completed successfully');
@@ -415,35 +417,98 @@ class NotificationService {
     await _reconnectionManager.attemptReconnection();
   }
 
-  Future<void> _handleForegroundMessage(RemoteMessage message) async {
-    _logger.info('Handling foreground message:');
-    _logger.info('Message ID: ${message.messageId}');
-    _logger.info('Data: ${message.data}');
-    _logger.info('Notification: ${message.notification?.title}, ${message.notification?.body}');
-    
+  Future<void> handleForegroundMessage(RemoteMessage message) async {
     try {
-      final notificationType = message.data['type']?.toString().toUpperCase();
-      _logger.info('Processing notification type: $notificationType');
-      
-      switch (notificationType) {
-        case 'ORDER_PLACED':
-          _logger.info('Handling new order notification');
-          await _handleNewOrderNotification(message);
-          break;
-        case 'ORDER_ACCEPTED':
-        case 'ORDER_DELIVERED':
-        case 'ORDER_CANCELLED':
-          _logger.info('Handling order update notification');
-          await _handleOrderUpdateNotification(message);
-          break;
-        default:
-          _logger.info('Handling general notification');
-          await _handleGeneralNotification(message);
+      if (!_initialized) {
+        _logger.info('NotificationService not initialized, initializing now...');
+        await initialize();
       }
 
-      _handleNotificationData(message.data);
+      _logger.info('Received foreground message:', {
+        'messageId': message.messageId,
+        'type': message.data['type'],
+        'platform': message.data['platform'] ?? 'unknown',
+        'title': message.notification?.title,
+        'body': message.notification?.body,
+        'data': message.data,
+      });
+
+      // Create notification details based on type
+      final notificationId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final isNewOrder = message.data['type']?.toUpperCase() == 'NEW_ORDER';
+      final isOrderPlaced = message.data['type']?.toUpperCase() == 'ORDER_PLACED';
+
+      _logger.info('Processing notification:', {
+        'notificationId': notificationId,
+        'isNewOrder': isNewOrder,
+        'isOrderPlaced': isOrderPlaced
+      });
+
+      final androidChannel = NotificationChannels.getAndroidChannelDetails(
+        isNewOrder ? 'NEW_ORDER' : message.data['type'] ?? ''
+      );
+      
+      final iosChannel = DarwinNotificationDetails(
+        presentSound: true,
+        presentBadge: true,
+        presentAlert: true,
+        sound: 'notification_sound.aiff',
+        interruptionLevel: InterruptionLevel.timeSensitive,
+      );
+
+      String title = message.notification?.title ?? message.data['title'] ?? 'New Notification';
+      String body = message.notification?.body ?? message.data['body'] ?? '';
+      
+      // Add amount to body if available
+      if (message.data['amount'] != null) {
+        body += ' (₹${message.data['amount']})';
+        _logger.info('Added amount to notification body:', {
+          'amount': message.data['amount'],
+          'finalBody': body
+        });
+      }
+
+      // Show the notification
+      _logger.info('Showing notification:', {
+        'title': title,
+        'body': body,
+        'channelId': androidChannel.channelId,
+      });
+
+      await flutterLocalNotificationsPlugin.show(
+        notificationId,
+        title,
+        body,
+        NotificationDetails(android: androidChannel, iOS: iosChannel),
+        payload: json.encode(message.data),
+      );
+
+      _logger.info('Notification shown successfully');
+
+      // Play sound for new orders
+      if (isNewOrder || isOrderPlaced) {
+        _logger.info('Playing notification sound for order notification');
+        await playNewOrderSound();
+        
+        // Vibrate for Android
+        if (Platform.isAndroid) {
+          try {
+            await HapticFeedback.vibrate();
+            _logger.info('Vibration feedback triggered');
+          } catch (e) {
+            _logger.error('Error during vibration:', e);
+          }
+        }
+      }
+
+      _logger.info('Foreground notification processing completed:', {
+        'title': title,
+        'body': body,
+        'type': message.data['type'],
+        'notificationId': notificationId
+      });
     } catch (e, stackTrace) {
-      _logger.error('Error handling foreground message', e, stackTrace);
+      _logger.error('Error handling foreground message:', e, stackTrace);
     }
   }
 
@@ -1012,12 +1077,12 @@ class NotificationService {
 
   Future<void> playNewOrderSound() async {
     try {
-      await _audioPlayer.play(AssetSource('sounds/notification_sound.mp3'));
-      if (Platform.isAndroid) {
-        await HapticFeedback.vibrate();
-      }
+      await _audioPlayer.stop(); // Stop any playing sound first
+      await _audioPlayer.setSource(AssetSource('sounds/notification_sound.mp3'));
+      await _audioPlayer.resume();
+      _logger.info('Notification sound played successfully');
     } catch (e) {
-      _logger.error('Error playing notification sound', e);
+      _logger.error('Error playing notification sound:', e);
     }
   }
 
@@ -1250,13 +1315,15 @@ class NotificationService {
             final authToken = prefs.getString('token');
             if (authToken != null) {
               await _apiService.post(
-                '/api/users/update-fcm-token',
+                '/api/users/fcm-token',
                 {
                   'fcmToken': _fcmToken,
                   'deviceType': Platform.isIOS ? 'ios' : 'android',
                   'deviceInfo': await _getDeviceInfo(),
                   'appVersion': await _getAppVersion(),
-                  'timestamp': DateTime.now().toIso8601String(),
+                  'platform': Platform.isIOS ? 'ios' : 'android',
+                  'registeredAt': DateTime.now().toIso8601String(),
+                  'expiresAt': DateTime.now().add(const Duration(days: 30)).toIso8601String(),
                 },
                 authToken,
               );
@@ -1285,15 +1352,33 @@ class NotificationService {
     }
   }
 
-  Future<String> _getDeviceInfo() async {
-    if (Platform.isIOS) {
-      final iosInfo = await DeviceInfoPlugin().iosInfo;
-      return '${iosInfo.name} ${iosInfo.systemVersion}';
-    } else if (Platform.isAndroid) {
-      final androidInfo = await DeviceInfoPlugin().androidInfo;
-      return '${androidInfo.manufacturer} ${androidInfo.model}';
+  Future<Map<String, String>> _getDeviceInfo() async {
+    try {
+      final deviceInfo = DeviceInfoPlugin();
+      final Map<String, String> deviceData = {};
+
+      if (Platform.isAndroid) {
+        final androidInfo = await deviceInfo.androidInfo;
+        deviceData.addAll({
+          'manufacturer': androidInfo.manufacturer,
+          'model': androidInfo.model,
+          'version': androidInfo.version.release,
+          'sdk': androidInfo.version.sdkInt.toString(),
+        });
+      } else if (Platform.isIOS) {
+        final iosInfo = await deviceInfo.iosInfo;
+        deviceData.addAll({
+          'name': iosInfo.name ?? '',
+          'model': iosInfo.model ?? '',
+          'systemVersion': iosInfo.systemVersion ?? '',
+        });
+      }
+
+      return deviceData;
+    } catch (e) {
+      _logger.error('Error getting device info:', e);
+      return {};
     }
-    return 'unknown';
   }
 
   Future<String> _getAppVersion() async {
@@ -1301,8 +1386,165 @@ class NotificationService {
       final packageInfo = await PackageInfo.fromPlatform();
       return packageInfo.version;
     } catch (e) {
-      _logger.error('Error getting app version: $e');
+      _logger.error('Error getting app version:', e);
       return '1.0.0';
+    }
+  }
+
+  Future<void> registerFCMToken() async {
+    try {
+      final fcmToken = await FirebaseMessaging.instance.getToken();
+      if (fcmToken == null) {
+        logger.error('Failed to get FCM token');
+        return;
+      }
+
+      logger.info('Registering FCM token:', {
+        'tokenPrefix': fcmToken.substring(0, 10),
+      });
+
+      // Get device info
+      final deviceInfo = await _getDeviceInfo();
+      final platform = Platform.isAndroid ? 'android' : Platform.isIOS ? 'ios' : 'web';
+
+      // Get auth token
+      final prefs = await SharedPreferences.getInstance();
+      final authToken = prefs.getString('token');
+      
+      if (authToken == null) {
+        logger.error('No auth token found when registering FCM token');
+        return;
+      }
+
+      // Send token to backend with device info and expiration
+      final response = await _apiService.post(
+        '/api/users/fcm-token',
+        {
+          'fcmToken': fcmToken,
+          'deviceType': platform,
+          'deviceInfo': {
+            ...deviceInfo,
+            'appVersion': await _getAppVersion(),
+            'platform': platform,
+            'registeredAt': DateTime.now().toIso8601String(),
+            'expiresAt': DateTime.now().add(const Duration(days: 30)).toIso8601String(),
+          },
+        },
+        authToken,
+      );
+
+      if (response['success'] == true) {
+        logger.info('FCM token registered successfully');
+        await prefs.setString('lastTokenUpdate', DateTime.now().toIso8601String());
+      } else {
+        logger.error('Failed to register FCM token:', {
+          'error': response['message'] ?? 'Unknown error',
+          'response': response,
+        });
+      }
+    } catch (e, stackTrace) {
+      logger.error('Error registering FCM token:', e, stackTrace);
+    }
+  }
+
+  Future<void> showBackgroundNotification(RemoteMessage message) async {
+    try {
+      if (!_initialized) {
+        print('NotificationService not initialized, initializing now...');
+        await initialize();
+      }
+
+      print('Received background message:');
+      print('- Message ID: ${message.messageId}');
+      print('- Type: ${message.data['type']}');
+      print('- Platform: ${message.data['platform'] ?? 'unknown'}');
+      print('- Title: ${message.notification?.title}');
+      print('- Body: ${message.notification?.body}');
+      print('- Data: ${message.data}');
+
+      final notificationId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final isNewOrder = message.data['type']?.toUpperCase() == 'NEW_ORDER';
+      final isOrderPlaced = message.data['type']?.toUpperCase() == 'ORDER_PLACED';
+
+      print('Processing background notification:');
+      print('- Notification ID: $notificationId');
+      print('- Is New Order: $isNewOrder');
+      print('- Is Order Placed: $isOrderPlaced');
+
+      final androidChannel = NotificationChannels.getAndroidChannelDetails(
+        isNewOrder ? 'NEW_ORDER' : message.data['type'] ?? ''
+      );
+      
+      final iosChannel = DarwinNotificationDetails(
+        presentSound: true,
+        presentBadge: true,
+        presentAlert: true,
+        sound: 'notification_sound.aiff',
+        interruptionLevel: InterruptionLevel.timeSensitive,
+        threadIdentifier: 'new_orders',
+      );
+
+      String title = message.notification?.title ?? message.data['title'] ?? 'New Notification';
+      String body = message.notification?.body ?? message.data['body'] ?? '';
+      
+      // Add amount to body if available
+      if (message.data['amount'] != null) {
+        body += ' (₹${message.data['amount']})';
+        print('Added amount to notification body:');
+        print('- Amount: ${message.data['amount']}');
+        print('- Final Body: $body');
+      }
+
+      print('Showing background notification:');
+      print('- Title: $title');
+      print('- Body: $body');
+      print('- Channel ID: ${androidChannel.channelId}');
+
+      await flutterLocalNotificationsPlugin.show(
+        notificationId,
+        title,
+        body,
+        NotificationDetails(android: androidChannel, iOS: iosChannel),
+        payload: json.encode(message.data),
+      );
+
+      print('Background notification shown successfully');
+
+      // Play sound for new orders
+      if (isNewOrder || isOrderPlaced) {
+        print('Playing notification sound for order notification');
+        final player = AudioPlayer();
+        try {
+          await player.setSource(AssetSource('sounds/notification_sound.mp3'));
+          await player.resume();
+          await Future.delayed(const Duration(seconds: 2));
+          print('Notification sound played successfully');
+        } catch (e) {
+          print('Error playing notification sound: $e');
+        } finally {
+          player.dispose();
+        }
+
+        // Vibrate for Android
+        if (Platform.isAndroid) {
+          try {
+            await HapticFeedback.vibrate();
+            print('Vibration feedback triggered');
+          } catch (e) {
+            print('Error during vibration: $e');
+          }
+        }
+      }
+
+      print('Background notification processing completed:');
+      print('- Title: $title');
+      print('- Body: $body');
+      print('- Type: ${message.data['type']}');
+      print('- Notification ID: $notificationId');
+    } catch (e, stackTrace) {
+      print('Error showing background notification:');
+      print('Error: $e');
+      print('Stack trace: $stackTrace');
     }
   }
 } 

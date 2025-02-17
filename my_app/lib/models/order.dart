@@ -1,96 +1,111 @@
 import 'package:my_app/models/cart.dart';
 
 class OrderItem {
-  final String menuItemId;
+  final String menuItem;
   final String itemName;
   final int quantity;
   final String size;
+  final double price;
 
   OrderItem({
-    required this.menuItemId,
+    required this.menuItem,
     required this.itemName,
     required this.quantity,
     required this.size,
+    required this.price,
   });
 
-  Map<String, dynamic> toJson() => {
-    'menuItem': menuItemId,
-    'itemName': itemName,
-    'quantity': quantity,
-    'size': size,
-  };
+  factory OrderItem.fromJson(Map<String, dynamic> json) {
+    return OrderItem(
+      menuItem: json['menuItem'] ?? '',
+      itemName: json['itemName'] ?? '',
+      quantity: json['quantity'] ?? 0,
+      size: json['size'] ?? '',
+      price: (json['price'] ?? 0.0).toDouble(),
+    );
+  }
 
-  factory OrderItem.fromJson(Map<String, dynamic> json) => OrderItem(
-    menuItemId: json['menuItem'],
-    itemName: json['itemName'],
-    quantity: json['quantity'],
-    size: json['size'],
-  );
+  Map<String, dynamic> toJson() {
+    return {
+      'menuItem': menuItem,
+      'itemName': itemName,
+      'quantity': quantity,
+      'size': size,
+      'price': price,
+    };
+  }
 
   factory OrderItem.fromCartItem(CartItem item) => OrderItem(
-    menuItemId: item.id,
+    menuItem: item.id,
     itemName: item.name,
     quantity: item.quantity,
     size: item.size,
+    price: item.price,
   );
 }
 
 class Order {
-  final String? id;
+  final String id;
   final String restaurantId;
   final String restaurantName;
   final String customerId;
   final List<OrderItem> items;
   final double totalAmount;
-  final String address;
-  final String orderStatus;
+  final String status;
   final String? cancellationReason;
+  final String address;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final String platform;
 
   Order({
-    this.id,
+    required this.id,
     required this.restaurantId,
     required this.restaurantName,
     required this.customerId,
     required this.items,
     required this.totalAmount,
-    required this.address,
-    this.orderStatus = 'Placed',
+    required this.status,
     this.cancellationReason,
-    DateTime? createdAt,
-    DateTime? updatedAt,
-  }) : 
-    this.createdAt = createdAt ?? DateTime.now(),
-    this.updatedAt = updatedAt ?? DateTime.now();
+    required this.address,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.platform,
+  });
 
-  Map<String, dynamic> toJson() => {
-    if (id != null) '_id': id,
-    'restaurant': restaurantId,
-    'restaurantName': restaurantName,
-    'customer': customerId,
-    'items': items.map((item) => item.toJson()).toList(),
-    'totalAmount': totalAmount,
-    'address': address,
-    'orderStatus': orderStatus,
-    if (cancellationReason != null) 'cancellationReason': cancellationReason,
-    'createdAt': createdAt.toIso8601String(),
-    'updatedAt': updatedAt.toIso8601String(),
-  };
+  factory Order.fromJson(Map<String, dynamic> json) {
+    return Order(
+      id: json['_id'] ?? '',
+      restaurantId: json['restaurant'] ?? '',
+      restaurantName: json['restaurantName'] ?? '',
+      customerId: json['customer'] ?? '',
+      items: (json['items'] as List<dynamic>?)
+          ?.map((item) => OrderItem.fromJson(item))
+          .toList() ?? [],
+      totalAmount: (json['totalAmount'] ?? 0.0).toDouble(),
+      status: json['orderStatus'] ?? '',
+      cancellationReason: json['cancellationReason'],
+      address: json['address'] ?? '',
+      createdAt: DateTime.parse(json['createdAt'] ?? DateTime.now().toIso8601String()),
+      updatedAt: DateTime.parse(json['updatedAt'] ?? DateTime.now().toIso8601String()),
+      platform: json['platform'] ?? 'app',
+    );
+  }
 
-  factory Order.fromJson(Map<String, dynamic> json) => Order(
-    id: json['_id'],
-    restaurantId: json['restaurant'],
-    restaurantName: json['restaurantName'],
-    customerId: json['customer'],
-    items: (json['items'] as List)
-        .map((item) => OrderItem.fromJson(item))
-        .toList(),
-    totalAmount: json['totalAmount'].toDouble(),
-    address: json['address'],
-    orderStatus: json['orderStatus'],
-    cancellationReason: json['cancellationReason'],
-    createdAt: DateTime.parse(json['createdAt']),
-    updatedAt: DateTime.parse(json['updatedAt']),
-  );
+  Map<String, dynamic> toJson() {
+    return {
+      '_id': id,
+      'restaurant': restaurantId,
+      'restaurantName': restaurantName,
+      'customer': customerId,
+      'items': items.map((item) => item.toJson()).toList(),
+      'totalAmount': totalAmount,
+      'orderStatus': status,
+      if (cancellationReason != null) 'cancellationReason': cancellationReason,
+      'address': address,
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
+      'platform': platform,
+    };
+  }
 } 

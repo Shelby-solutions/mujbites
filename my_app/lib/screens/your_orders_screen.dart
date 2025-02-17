@@ -4,6 +4,7 @@ import '../services/api_service.dart';
 import '../widgets/custom_navbar.dart';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/order.dart';
 
 class YourOrdersScreen extends StatefulWidget {
   const YourOrdersScreen({super.key});
@@ -14,7 +15,7 @@ class YourOrdersScreen extends StatefulWidget {
 
 class _YourOrdersScreenState extends State<YourOrdersScreen> with SingleTickerProviderStateMixin {
   final ApiService _apiService = ApiService();
-  List<Map<String, dynamic>> _orders = [];
+  List<Order> _orders = [];
   bool _isLoading = true;
   String? _error;
   Timer? _refreshTimer;
@@ -76,7 +77,7 @@ class _YourOrdersScreenState extends State<YourOrdersScreen> with SingleTickerPr
 
   Future<void> _fetchOrders() async {
     try {
-      final orders = await _apiService.getUserOrders();
+      final orders = await _apiService.getOrders();
       if (mounted) {
         setState(() {
           _orders = orders;
@@ -146,7 +147,7 @@ class _YourOrdersScreenState extends State<YourOrdersScreen> with SingleTickerPr
                                               children: [
                                                 Expanded(
                                                   child: Text(
-                                                    'Restaurant: ${order['restaurantName'] ?? 'N/A'}',
+                                                    'Restaurant: ${order.restaurantName ?? 'N/A'}',
                                                     style: const TextStyle(
                                                       fontWeight: FontWeight.bold,
                                                       fontSize: 16,
@@ -154,28 +155,28 @@ class _YourOrdersScreenState extends State<YourOrdersScreen> with SingleTickerPr
                                                     ),
                                                   ),
                                                 ),
-                                                _buildStatusChip(order['orderStatus'] ?? 'Unknown'),
+                                                _buildStatusChip(order.status ?? 'Unknown'),
                                               ],
                                             ),
                                             const SizedBox(height: 8),
                                             Text(
-                                              'Ordered At: ${_formatDate(order['createdAt'])}',
+                                              'Ordered At: ${_formatDate(order.createdAt)}',
                                               style: const TextStyle(color: Colors.grey),
                                             ),
                                             const SizedBox(height: 8),
                                             Text(
-                                              'Total Amount: ₹${order['totalAmount']?.toString() ?? '0.00'}',
+                                              'Total Amount: ₹${order.totalAmount?.toString() ?? '0.00'}',
                                               style: const TextStyle(
                                                 fontWeight: FontWeight.bold,
                                                 fontSize: 16,
                                                 color: Color(0xFFD4AF37),
                                               ),
                                             ),
-                                            if (order['orderStatus'] == 'Cancelled' &&
-                                                order['cancellationReason'] != null) ...[
+                                            if (order.status == 'Cancelled' &&
+                                                order.cancellationReason != null) ...[
                                               const SizedBox(height: 8),
                                               Text(
-                                                'Cancellation Reason: ${order['cancellationReason']}',
+                                                'Cancellation Reason: ${order.cancellationReason}',
                                                 style: const TextStyle(color: Colors.red),
                                               ),
                                             ],
@@ -188,7 +189,7 @@ class _YourOrdersScreenState extends State<YourOrdersScreen> with SingleTickerPr
                                               ),
                                             ),
                                             const SizedBox(height: 8),
-                                            ..._buildOrderItems(order['items'] ?? []),
+                                            ..._buildOrderItems(order.items ?? []),
                                           ],
                                         ),
                                       ),

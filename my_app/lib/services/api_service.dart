@@ -7,6 +7,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:my_app/services/user_preferences.dart';
 import 'package:dio/dio.dart';  // Add this import at the top
 import 'package:package_info_plus/package_info_plus.dart';
+import '../models/order.dart';
+import '../utils/logger.dart';
 
 class ApiService {
   // Change to true for production
@@ -251,9 +253,24 @@ class ApiService {
     }
   }
 
-  Future<List<Map<String, dynamic>>> getUserOrders() async {
-    final response = await _authenticatedRequest('/orders');
-    return List<Map<String, dynamic>>.from(response['orders'] ?? []);
+  Future<List<Order>> getOrders() async {
+    try {
+      final headers = await getHeaders();
+      final response = await http.get(
+        Uri.parse('$baseUrl/orders'),
+        headers: headers,
+      );
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body)['orders'];
+        return data.map((json) => Order.fromJson(json)).toList();
+      } else {
+        throw Exception('Failed to load orders: ${response.statusCode}');
+      }
+    } catch (e) {
+      logger.error('Error fetching orders:', e);
+      rethrow;
+    }
   }
 
   // Profile Methods

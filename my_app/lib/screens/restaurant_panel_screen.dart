@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
@@ -14,7 +17,6 @@ import '../widgets/loading_screen.dart';
 import 'package:flutter/rendering.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'dart:convert';
 import 'dart:io' show Platform;
 
 class RestaurantPanelScreen extends StatefulWidget {
@@ -332,8 +334,33 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> with Auto
 
   Future<void> _initializeNotifications() async {
     await _notificationService.initialize();
-    _notificationService.onNewOrder = (orderData) {
-      _fetchOrders(); // Refresh orders when new order notification received
+    
+    // Set up notification callback
+    _notificationService.onNewOrder = (orderData) async {
+      print('New order notification received in restaurant panel');
+      
+      // Force refresh orders
+      await _fetchOrders(forceRefresh: true);
+      
+      // Update order counts
+      _updateOrderCounts();
+      
+      // Show in-app notification if the app is in foreground
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('New order received!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      
+      // Play notification sound
+      await _notificationService.playNewOrderSound();
+      
+      // Prefetch other tabs in background
+      _prefetchOtherTabs();
     };
   }
 
@@ -361,8 +388,33 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> with Auto
 
   Future<void> _setupNotificationHandlers() async {
     await _notificationService.initialize();
-    _notificationService.onNewOrder = (orderData) {
-      _fetchOrders(); // Refresh orders when new order notification received
+    
+    // Set up notification callback
+    _notificationService.onNewOrder = (orderData) async {
+      print('New order notification received in restaurant panel');
+      
+      // Force refresh orders
+      await _fetchOrders(forceRefresh: true);
+      
+      // Update order counts
+      _updateOrderCounts();
+      
+      // Show in-app notification if the app is in foreground
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('New order received!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      
+      // Play notification sound
+      await _notificationService.playNewOrderSound();
+      
+      // Prefetch other tabs in background
+      _prefetchOtherTabs();
     };
   }
 
@@ -380,35 +432,32 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> with Auto
         _lastFetchTime.containsKey(currentStatus) &&
         DateTime.now().difference(_lastFetchTime[currentStatus]!) < const Duration(seconds: 30)) {
       print('Using cached orders for status: $currentStatus');
-      setState(() {
-        _orders = List<Map<String, dynamic>>.from(_orderCache[currentStatus] ?? []);
-      });
+      if (mounted) {
+        setState(() {
+          _orders = List<Map<String, dynamic>>.from(_orderCache[currentStatus] ?? []);
+        });
+      }
       return;
     }
 
-    await _fetchOrdersForStatus(currentStatus);
-  }
-
-  Future<void> _fetchOrdersForStatus(String status) async {
-    if (!mounted || _restaurantData == null) return;
-
-    print('Fetching orders for status: $status');
-    setState(() {
-      if (status == _activeTab) {
-        _isLoading = true;
-      }
-      _error = null;
-    });
+    if (mounted) {
+      setState(() {
+        if (currentStatus == _activeTab) {
+          _isLoading = true;
+        }
+        _error = null;
+      });
+    }
 
     try {
       final orders = await _apiService.getRestaurantOrders(
         _restaurantData!['_id'],
-        status: status,
+        status: currentStatus,
       );
 
       if (!mounted) return;
 
-      print('Received ${orders.length} orders for status: $status');
+      print('Received ${orders.length} orders for status: $currentStatus');
       
       // Filter orders for today only
       final todayOrders = orders.where(_isOrderFromToday).toList();
@@ -428,26 +477,29 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> with Auto
         return copy;
       }).toList();
       
-      setState(() {
-        if (status == _activeTab) {
-          _orders = ordersCopy;
-          _isLoading = false;
-        }
-        _orderCache[status] = ordersCopy;
-        _lastFetchTime[status] = DateTime.now();
-      });
+      if (mounted) {
+        setState(() {
+          if (currentStatus == _activeTab) {
+            _orders = ordersCopy;
+            _isLoading = false;
+          }
+          _orderCache[currentStatus] = ordersCopy;
+          _lastFetchTime[currentStatus] = DateTime.now();
+        });
+      }
 
       _updateOrderCounts();
 
     } catch (e) {
-      print('Error fetching orders for $status: $e');
-      if (!mounted) return;
-      setState(() {
-        if (status == _activeTab) {
-          _error = 'Failed to load orders';
-          _isLoading = false;
-        }
-      });
+      print('Error fetching orders for $currentStatus: $e');
+      if (mounted) {
+        setState(() {
+          if (currentStatus == _activeTab) {
+            _error = 'Failed to load orders';
+            _isLoading = false;
+          }
+        });
+      }
     }
   }
 
@@ -514,16 +566,6 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> with Auto
       final newStatus = updatedOrder['orderStatus'];
       print('Order updated successfully. New status: $newStatus');
 
-      // Show success message only for manual actions
-      if (mounted && !isAutoCancel) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Order ${_getActionMessage(action)}'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-
       // Clear all caches to force fresh data
       _orderCache.clear();
       _lastFetchTime.clear();
@@ -535,19 +577,34 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> with Auto
           _orderLoadingStates[orderId] = false;
         });
         
-        await Future.wait([
-          _fetchOrdersForStatus('Placed'),
-          _fetchOrdersForStatus('Accepted'),
-        ]);
+        // First fetch Placed orders
+        await _fetchOrders(forceRefresh: true);
+        
+        // Then fetch Accepted orders
+        setState(() => _activeTab = 'Accepted');
+        await _fetchOrders(forceRefresh: true);
+
+        // Play notification sound for confirmed orders
+        await _notificationService.playNewOrderSound();
       } else {
         setState(() {
           _orderLoadingStates[orderId] = false;
         });
-        await _fetchOrdersForStatus(_activeTab);
+        await _fetchOrders(forceRefresh: true);
       }
 
       _updateAllTabs();
       _updateOrderCounts();
+
+      // Show success message only for manual actions
+      if (mounted && !isAutoCancel) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Order ${_getActionMessage(action)}'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
 
     } catch (e) {
       print('Error updating order status: $e');
@@ -570,7 +627,7 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> with Auto
     
     for (final status in allStatuses) {
       if (status == _activeTab) continue; // Skip active tab as it's already updated
-      await _fetchOrdersForStatus(status);
+      await _fetchOrders(forceRefresh: true);
     }
   }
 
@@ -1325,13 +1382,21 @@ class _RestaurantPanelScreenState extends State<RestaurantPanelScreen> with Auto
                 _notificationService.playNewOrderSound();
                 
                 // Show in-app notification
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('New order received!'),
-                    backgroundColor: Colors.green,
-                    duration: Duration(seconds: 3),
-                  ),
-                );
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('New order received!'),
+                      backgroundColor: Colors.green,
+                      duration: Duration(seconds: 3),
+                    ),
+                  );
+                }
+
+                // Update order counts
+                _updateOrderCounts();
+                
+                // Prefetch other tabs in the background
+                _prefetchOtherTabs();
               }
             }
           } catch (e) {

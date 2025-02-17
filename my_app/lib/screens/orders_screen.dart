@@ -8,9 +8,13 @@ import '../widgets/loading_screen.dart';
 import 'package:intl/intl.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
+import '../models/order.dart';
+import '../utils/logger.dart';
 
 class OrdersScreen extends StatefulWidget {
-  const OrdersScreen({super.key});
+  final String? initialOrderId;
+  
+  const OrdersScreen({Key? key, this.initialOrderId}) : super(key: key);
 
   @override
   State<OrdersScreen> createState() => _OrdersScreenState();
@@ -18,12 +22,13 @@ class OrdersScreen extends StatefulWidget {
 
 class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderStateMixin {
   final ApiService _apiService = ApiService();
-  List<Map<String, dynamic>> _orders = [];
+  List<Order> _orders = [];
   bool _isLoading = true;
   String? _error;
   Timer? _refreshTimer;
   String? _userRole;
   bool _isLoggedIn = false;
+  String? _selectedOrderId;
 
   late AnimationController _animationController;
   late Animation<double> _animation;
@@ -31,9 +36,12 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
   @override
   void initState() {
     super.initState();
-    _loadOrders();
+    _fetchOrders();
     _loadUserData();
     _setupAutoRefresh();
+    if (widget.initialOrderId != null) {
+      _selectedOrderId = widget.initialOrderId;
+    }
 
     _animationController = AnimationController(
       duration: const Duration(milliseconds: 1500),
@@ -48,7 +56,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
 
   void _setupAutoRefresh() {
     _refreshTimer = Timer.periodic(const Duration(minutes: 1), (_) {
-      _loadOrders();
+      _fetchOrders();
     });
   }
 
@@ -92,23 +100,37 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
     super.dispose();
   }
 
-  Future<void> _loadOrders() async {
+  Future<void> _fetchOrders() async {
     try {
-      final orders = await _apiService.getUserOrders();
-      if (mounted) {
-        setState(() {
-          _orders = orders;
-          _isLoading = false;
-          _error = null;
+      setState(() => _isLoading = true);
+      final orders = await _apiService.getOrders();
+      setState(() {
+        _orders = orders;
+        _isLoading = false;
+      });
+
+      // If we have an initialOrderId, scroll to it
+      if (_selectedOrderId != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _scrollToOrder(_selectedOrderId!);
         });
       }
     } catch (e) {
+      logger.error('Error fetching orders:', e);
+      setState(() => _isLoading = false);
       if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _isLoading = false;
-        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Error loading orders')),
+        );
       }
+    }
+  }
+
+  void _scrollToOrder(String orderId) {
+    final index = _orders.indexWhere((order) => order.id == orderId);
+    if (index != -1) {
+      // Implement scrolling to the specific order
+      // You'll need to add a ScrollController and ListView.builder
     }
   }
 
@@ -162,7 +184,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                         color: AppTheme.primary,
                         size: isSmallScreen ? 24 : 28,
                       ),
-                      onPressed: _loadOrders,
+                      onPressed: _fetchOrders,
                     ),
                   ],
                 ),
@@ -171,7 +193,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
               // Main Content
               Expanded(
                 child: RefreshIndicator(
-                  onRefresh: _loadOrders,
+                  onRefresh: _fetchOrders,
                   color: AppTheme.primary,
                   child: _isLoading
                       ? const LoadingScreen()
@@ -224,7 +246,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
           ),
           const SizedBox(height: 24),
           ElevatedButton.icon(
-            onPressed: _loadOrders,
+            onPressed: _fetchOrders,
             icon: const Icon(Icons.refresh_rounded),
             label: Text(
               'Try Again',
@@ -307,6 +329,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
         itemCount: _orders.length,
         itemBuilder: (context, index) {
           final order = _orders[index];
+          final isSelected = order.id == _selectedOrderId;
           return AnimatedBuilder(
             animation: _animation,
             builder: (context, child) {
@@ -349,7 +372,8 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                   color: Colors.transparent,
                   child: InkWell(
                     onTap: () {
-                      // Optional: Add order details view
+                      setState(() => _selectedOrderId = order.id);
+                      // Implement order details view
                     },
                     child: Padding(
                       padding: const EdgeInsets.all(16),
@@ -363,7 +387,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      order['restaurantName'] ?? 'Unknown Restaurant',
+                                      order.restaurantName ?? 'Unknown Restaurant',
                                       style: GoogleFonts.montserrat(
                                         fontWeight: FontWeight.bold,
                                         fontSize: isSmallScreen ? 16 : 18,
@@ -372,7 +396,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
-                                      'Order #${order['_id'].toString().substring(0, 8)}',
+                                      'Order #${order.id.substring(0, 8)}',
                                       style: GoogleFonts.montserrat(
                                         color: Colors.grey[600],
                                         fontSize: isSmallScreen ? 12 : 14,
@@ -381,11 +405,11 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                                   ],
                                 ),
                               ),
-                              _buildStatusChip(order['orderStatus']),
+                              _buildStatusChip(order.status),
                             ],
                           ),
-                          if (order['orderStatus']?.toLowerCase() == 'cancelled' && 
-                              order['cancellationReason'] != null) ...[
+                          if (order.status?.toLowerCase() == 'cancelled' && 
+                              order.cancellationReason != null) ...[
                             const SizedBox(height: 12),
                             Container(
                               padding: const EdgeInsets.all(12),
@@ -403,7 +427,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: Text(
-                                      'Cancelled: ${order['cancellationReason']}',
+                                      'Cancelled: ${order.cancellationReason}',
                                       style: GoogleFonts.montserrat(
                                         fontSize: 12,
                                         color: Colors.red[900],
@@ -419,7 +443,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                           const Divider(height: 1),
                           const SizedBox(height: 16),
                           ...List.generate(
-                            order['items']?.length ?? 0,
+                            order.items?.length ?? 0,
                             (index) => Padding(
                               padding: const EdgeInsets.only(bottom: 8),
                               child: Row(
@@ -427,7 +451,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                                 children: [
                                   Expanded(
                                     child: Text(
-                                      order['items'][index]['itemName'],
+                                      order.items[index].itemName,
                                       style: GoogleFonts.montserrat(
                                         fontSize: isSmallScreen ? 13 : 14,
                                         color: Colors.grey[800],
@@ -444,7 +468,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                     child: Text(
-                                      '×${order['items'][index]['quantity']}',
+                                      '×${order.items[index].quantity}',
                                       style: GoogleFonts.montserrat(
                                         fontSize: isSmallScreen ? 12 : 13,
                                         color: Colors.grey[700],
@@ -456,7 +480,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                               ),
                             ),
                           ),
-                          if (order['address'] != null) ...[
+                          if (order.address != null) ...[
                             const SizedBox(height: 16),
                             Container(
                               padding: const EdgeInsets.all(12),
@@ -475,7 +499,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: Text(
-                                      order['address'].toString(),
+                                      order.address.toString(),
                                       style: GoogleFonts.montserrat(
                                         fontSize: isSmallScreen ? 12 : 13,
                                         color: Colors.grey[800],
@@ -503,7 +527,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
-                                    '₹${order['totalAmount']?.toStringAsFixed(2)}',
+                                    '₹${order.totalAmount?.toStringAsFixed(2)}',
                                     style: GoogleFonts.montserrat(
                                       fontSize: isSmallScreen ? 16 : 18,
                                       fontWeight: FontWeight.bold,
@@ -513,7 +537,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                                 ],
                               ),
                               Text(
-                                _formatDate(order['createdAt']),
+                                _formatDate(order.createdAt),
                                 style: GoogleFonts.montserrat(
                                   color: Colors.grey[600],
                                   fontSize: isSmallScreen ? 11 : 12,
