@@ -9,6 +9,7 @@ import 'package:dio/dio.dart';  // Add this import at the top
 import 'package:package_info_plus/package_info_plus.dart';
 import '../models/order.dart';
 import '../utils/logger.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 
 class ApiService {
   // Change to true for production
@@ -760,6 +761,11 @@ class ApiService {
 
       logger.info('Updating FCM token');
 
+      // Get device info and app version
+      final deviceInfo = await DeviceInfoPlugin().androidInfo;
+      final packageInfo = await PackageInfo.fromPlatform();
+      final appVersion = packageInfo.version;
+
       final response = await http.post(
         getUri('/users/fcm-token'),
         headers: {
@@ -768,7 +774,17 @@ class ApiService {
         },
         body: jsonEncode({
           'token': token,
-          'device': Platform.isIOS ? 'ios' : 'android', // Default to android for non-iOS
+          'device': Platform.isIOS ? 'ios' : 'android',
+          'lastUsed': DateTime.now().toIso8601String(),
+          'appVersion': appVersion,
+          'deviceType': Platform.isIOS ? 'ios' : 'android',
+          'deviceInfo': {
+            'manufacturer': deviceInfo.manufacturer,
+            'model': deviceInfo.model,
+            'version': deviceInfo.version.release,
+            'sdk': deviceInfo.version.sdkInt.toString(),
+          },
+          'lastTokenUpdate': DateTime.now().toIso8601String(),
         }),
       ).timeout(const Duration(seconds: 10));
 
@@ -776,7 +792,13 @@ class ApiService {
         final responseData = jsonDecode(response.body);
         logger.info('FCM token updated successfully:', {
           'activeTokens': responseData['user']['activeTokens'],
+          'appVersion': appVersion,
+          'deviceType': Platform.isIOS ? 'ios' : 'android',
         });
+
+        // Save token update timestamp locally
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('lastTokenUpdate', DateTime.now().toIso8601String());
       } else {
         final responseData = jsonDecode(response.body);
         throw Exception('Failed to update FCM token: ${responseData['message'] ?? response.body}');

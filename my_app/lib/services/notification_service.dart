@@ -1403,13 +1403,19 @@ class NotificationService {
         'tokenPrefix': fcmToken.substring(0, 10),
       });
 
-      // Get device info
-      final deviceData = await _getDeviceInfo();
+      // Get device info and app version
+      final deviceInfo = await _getDeviceInfo();
+      final appVersion = await _getAppVersion();
       
       // Prepare token registration data
       final tokenData = {
         'token': fcmToken,
         'device': Platform.isIOS ? 'ios' : 'android', // Default to android for non-iOS
+        'lastUsed': DateTime.now().toIso8601String(),
+        'appVersion': appVersion,
+        'deviceType': Platform.isIOS ? 'ios' : 'android',
+        'deviceInfo': deviceInfo,
+        'lastTokenUpdate': DateTime.now().toIso8601String(),
       };
 
       final response = await _apiService.post(
@@ -1418,8 +1424,14 @@ class NotificationService {
         await UserPreferences.getToken() ?? '',
       );
 
+      // Save token update timestamp locally
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('lastTokenUpdate', DateTime.now().toIso8601String());
+
       logger.info('FCM token registered successfully:', {
         'activeTokens': response['user']['activeTokens'],
+        'appVersion': appVersion,
+        'deviceType': Platform.isIOS ? 'ios' : 'android',
       });
     } catch (e, stackTrace) {
       logger.error('Error registering FCM token:', e, stackTrace);
