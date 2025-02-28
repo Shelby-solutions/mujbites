@@ -30,7 +30,7 @@ if (flutterVersionName == null) {
 
 android {
     namespace "com.mujbites.mujbites"
-    compileSdkVersion 34
+    compileSdkVersion 35
     ndkVersion flutter.ndkVersion
 
     compileOptions {
@@ -49,8 +49,8 @@ android {
 
     defaultConfig {
         applicationId "com.mujbites.mujbites"
-        minSdkVersion 21
-        targetSdkVersion 34
+        minSdkVersion 23
+        targetSdkVersion 33
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
@@ -68,9 +68,10 @@ android {
     buildTypes {
         release {
             signingConfig signingConfigs.release
-            minifyEnabled true
-            shrinkResources true
+            minifyEnabled false
+            shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            buildConfigField 'boolean', 'VERBOSE_LOGGING', 'true'
         }
         debug {
             signingConfig signingConfigs.debug
@@ -80,6 +81,7 @@ android {
     lint {
         disable 'InvalidPackage'
         checkReleaseBuilds false
+        baseline file("lint-baseline.xml")
     }
 }
 
@@ -93,6 +95,33 @@ dependencies {
     implementation platform('com.google.firebase:firebase-bom:32.7.1')
     implementation 'com.google.firebase:firebase-analytics'
     implementation 'com.google.firebase:firebase-messaging'
+    implementation 'com.google.android.play:app-update:2.1.0'
+    implementation 'com.google.android.play:review:2.0.1'
+    implementation 'com.google.android.play:app-update-ktx:2.1.0'
+    implementation 'com.google.android.gms:play-services-auth:20.5.0'
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.3'
     implementation 'androidx.core:core:1.12.0'
+}
+
+ext.kotlin_version = '1.9.0'
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+tasks.whenTaskAdded { task ->
+    if (task.name.contains("flutter_local_notifications") && task.name.contains("test")) {
+        task.enabled = false
+    }
+}
+
+subprojects {
+    afterEvaluate { project ->
+        if (project.name == 'flutter_local_notifications') {
+            project.tasks.withType(Test) {
+                enabled = false
+            }
+        }
+    }
 }

@@ -58,6 +58,12 @@
 -keep class com.google.firebase.messaging.RemoteMessage { *; }
 -keep class com.google.firebase.messaging.FirebaseMessagingService { *; }
 
+# Additional Firebase Classes
+-keep class com.google.firebase.analytics.** { *; }
+-keep class com.google.firebase.auth.** { *; }
+-keep class com.google.firebase.firestore.** { *; }
+-keep class com.google.firebase.storage.** { *; }
+
 # Crashlytics
 -keepattributes *Annotation*
 -keepattributes SourceFile,LineNumberTable
@@ -86,4 +92,7 @@
 -keep class * extends androidx.work.Worker
 -keep class * extends androidx.work.ListenableWorker {
     public <init>(android.content.Context,androidx.work.WorkerParameters);
-} 
+}
+
+# Keep all classes in the app package
+-keep class com.mujbites.mujbites.** { *; } 

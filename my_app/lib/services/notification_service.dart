@@ -380,7 +380,11 @@ class NotificationService {
       );
 
       // Setup connectivity monitoring
-      _connectivitySubscription = _connectivity.onConnectivityChanged.listen(_handleConnectivityChange);
+      _connectivitySubscription = _connectivity.onConnectivityChanged.listen((List<ConnectivityResult> results) {
+        for (var result in results) {
+          _handleConnectivityChange(result);
+        }
+      });
 
       // Initialize audio player
       await _audioPlayer.setSource(AssetSource('sounds/notification_sound.mp3'));

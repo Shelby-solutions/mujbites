@@ -1,0 +1,2 @@
+/Users/satwikkumar/Projects/mujbites-app/my_app/android/app/.cxx/RelWithDebInfo/5s214810/x86/CMakeFiles/edit_cache.dir
+/Users/satwikkumar/Projects/mujbites-app/my_app/android/app/.cxx/RelWithDebInfo/5s214810/x86/CMakeFiles/rebuild_cache.dir
